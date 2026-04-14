@@ -29,12 +29,13 @@ export type NodeClickHandler = (node: CanvasNodeView) => void
 
 export class CanvasRenderer {
   private svg: SVGSVGElement
+  private mainGroup: SVGGElement
   private nodesGroup: SVGGElement
   private edgesGroup: SVGGElement
   private nodes: Map<string, CanvasNodeView> = new Map()
   private onNodeClick: NodeClickHandler | null = null
 
-  // Pan state
+  // Pan / zoom state
   private isPanning = false
   private panStart = { x: 0, y: 0 }
   private viewOffset = { x: 0, y: 0 }
@@ -46,16 +47,20 @@ export class CanvasRenderer {
     this.svg.setAttribute('height', '100%')
     this.svg.style.cursor = 'grab'
 
-    // Dot grid background
+    this.addDefs()
     this.addDotGrid()
+
+    this.mainGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+    this.mainGroup.setAttribute('class', 'main-group')
 
     this.edgesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g')
     this.edgesGroup.setAttribute('class', 'edges')
     this.nodesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g')
     this.nodesGroup.setAttribute('class', 'nodes')
 
-    this.svg.appendChild(this.edgesGroup)
-    this.svg.appendChild(this.nodesGroup)
+    this.mainGroup.appendChild(this.edgesGroup)
+    this.mainGroup.appendChild(this.nodesGroup)
+    this.svg.appendChild(this.mainGroup)
     container.appendChild(this.svg)
 
     this.setupPanning()
@@ -72,27 +77,40 @@ export class CanvasRenderer {
       this.nodes.set(nd.id, view)
     })
 
-    // Draw edges first (behind nodes)
     edgeData.forEach(edge => this.drawEdge(edge))
 
-    // Draw nodes
-    this.nodes.forEach(node => this.drawNode(node))
+    // Draw nodes with staggered entrance animation
+    let index = 0
+    this.nodes.forEach(node => {
+      this.drawNode(node, index)
+      index++
+    })
   }
 
   updateNodeStatus(nodeId: string, status: string): void {
-    const node = this.nodes.get(`agent-${nodeId}`)
+    // Try exact ID first, then with agent- prefix
+    const node = this.nodes.get(`agent-${nodeId}`) ?? this.nodes.get(nodeId)
     if (!node) return
     node.status = status
 
-    const el = this.svg.querySelector(`[data-id="${node.id}"] rect`) as SVGRectElement | null
+    const el = this.svg.querySelector(`[data-id="${node.id}"] .node-rect`) as SVGRectElement | null
     if (el) {
       el.setAttribute('stroke', STATUS_COLORS[status as keyof typeof STATUS_COLORS] ?? '#6b7280')
+      if (status === 'running') {
+        el.classList.add('node-rect--running')
+      } else {
+        el.classList.remove('node-rect--running')
+      }
     }
 
-    // Update status dot
     const dot = this.svg.querySelector(`[data-id="${node.id}"] .status-dot`) as SVGCircleElement | null
     if (dot) {
       dot.setAttribute('fill', STATUS_COLORS[status as keyof typeof STATUS_COLORS] ?? '#6b7280')
+      dot.classList.toggle('status-dot--running', status === 'running')
+    }
+
+    if (status === 'success') {
+      this.showCompletionMark(node.id)
     }
   }
 
@@ -100,15 +118,38 @@ export class CanvasRenderer {
     this.onNodeClick = fn
   }
 
-  private drawNode(node: CanvasNodeView): void {
+  // Spotlight: dim everything except nodes of the given type
+  spotlight(nodeType: NodeType | undefined): void {
+    const dimEl = this.svg.querySelector('.spotlight-dim') as SVGRectElement | null
+    if (!nodeType) {
+      dimEl?.remove()
+      return
+    }
+    if (!dimEl) {
+      const dim = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+      dim.setAttribute('class', 'spotlight-dim')
+      dim.setAttribute('width', '100%')
+      dim.setAttribute('height', '100%')
+      dim.setAttribute('fill', 'rgba(0,0,0,0.55)')
+      dim.style.pointerEvents = 'none'
+      this.mainGroup.insertBefore(dim, this.nodesGroup)
+    }
+  }
+
+  private drawNode(node: CanvasNodeView, index: number): void {
     const style = NODE_STYLES[node.type]
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
     g.setAttribute('data-id', node.id)
     g.setAttribute('transform', `translate(${node.x}, ${node.y})`)
     g.style.cursor = 'pointer'
 
+    // Entrance animation via CSS class + delay
+    g.classList.add('node-enter')
+    g.style.animationDelay = `${index * 55}ms`
+
     // Background rect
     const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    rect.setAttribute('class', 'node-rect')
     rect.setAttribute('width', String(node.width))
     rect.setAttribute('height', String(node.height))
     rect.setAttribute('rx', String(style.borderRadius))
@@ -128,7 +169,7 @@ export class CanvasRenderer {
     // Label
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text')
     label.setAttribute('x', '36')
-    label.setAttribute('y', String(node.height / 2 - 4))
+    label.setAttribute('y', String(node.height / 2 - (node.sublabel ? 4 : -4)))
     label.setAttribute('fill', style.textColor)
     label.setAttribute('font-size', '12')
     label.setAttribute('font-weight', '600')
@@ -144,7 +185,7 @@ export class CanvasRenderer {
       sub.setAttribute('fill', '#6b7280')
       sub.setAttribute('font-size', '9')
       sub.setAttribute('font-family', 'var(--vscode-font-family, monospace)')
-      sub.textContent = truncate(node.sublabel, 22)
+      sub.textContent = truncate(node.sublabel, 24)
       g.appendChild(sub)
     }
 
@@ -159,14 +200,8 @@ export class CanvasRenderer {
       g.appendChild(dot)
     }
 
-    // Click handler
-    g.addEventListener('click', () => {
-      this.onNodeClick?.(node)
-    })
-
-    // Drag support
+    g.addEventListener('click', () => this.onNodeClick?.(node))
     this.makeDraggable(g, node)
-
     this.nodesGroup.appendChild(g)
   }
 
@@ -182,11 +217,31 @@ export class CanvasRenderer {
     path.setAttribute('stroke-width', '1.5')
     path.setAttribute('stroke-dasharray', '4 3')
     path.setAttribute('marker-end', 'url(#arrow)')
-
     this.edgesGroup.appendChild(path)
   }
 
-  private addDotGrid(): void {
+  private showCompletionMark(nodeId: string): void {
+    const g = this.svg.querySelector(`[data-id="${nodeId}"]`)
+    const node = this.nodes.get(nodeId)
+    if (!g || !node) return
+
+    const existing = g.querySelector('.completion-check')
+    existing?.remove()
+
+    const check = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+    check.setAttribute('class', 'completion-check')
+    check.setAttribute('x', String(node.width / 2))
+    check.setAttribute('y', String(node.height / 2 + 6))
+    check.setAttribute('text-anchor', 'middle')
+    check.setAttribute('fill', '#22c55e')
+    check.setAttribute('font-size', '18')
+    check.setAttribute('font-weight', 'bold')
+    check.textContent = '✓'
+    g.appendChild(check)
+    setTimeout(() => check.remove(), 3000)
+  }
+
+  private addDefs(): void {
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
 
     // Arrow marker
@@ -203,7 +258,12 @@ export class CanvasRenderer {
     marker.appendChild(arrowPath)
     defs.appendChild(marker)
 
-    // Dot pattern
+    this.svg.appendChild(defs)
+  }
+
+  private addDotGrid(): void {
+    const defs = this.svg.querySelector('defs') ?? document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+
     const pattern = document.createElementNS('http://www.w3.org/2000/svg', 'pattern')
     pattern.setAttribute('id', 'dot-grid')
     pattern.setAttribute('x', '0')
@@ -219,9 +279,8 @@ export class CanvasRenderer {
     pattern.appendChild(dot)
     defs.appendChild(pattern)
 
-    this.svg.appendChild(defs)
+    if (!this.svg.querySelector('defs')) this.svg.appendChild(defs)
 
-    // Background rect using the dot pattern
     const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
     bg.setAttribute('width', '100%')
     bg.setAttribute('height', '100%')
@@ -230,19 +289,6 @@ export class CanvasRenderer {
   }
 
   private setupPanning(): void {
-    let mainGroup: SVGGElement | null = null
-
-    const getMainGroup = (): SVGGElement => {
-      if (!mainGroup) {
-        mainGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g')
-        mainGroup.setAttribute('class', 'main-group')
-        this.svg.appendChild(mainGroup)
-        mainGroup.appendChild(this.edgesGroup)
-        mainGroup.appendChild(this.nodesGroup)
-      }
-      return mainGroup
-    }
-
     this.svg.addEventListener('mousedown', (e: MouseEvent) => {
       if ((e.target as SVGElement).closest('[data-id]')) return
       this.isPanning = true
@@ -254,7 +300,7 @@ export class CanvasRenderer {
       if (!this.isPanning) return
       this.viewOffset.x = e.clientX - this.panStart.x
       this.viewOffset.y = e.clientY - this.panStart.y
-      getMainGroup().setAttribute(
+      this.mainGroup.setAttribute(
         'transform',
         `translate(${this.viewOffset.x}, ${this.viewOffset.y}) scale(${this.scale})`
       )
@@ -265,11 +311,10 @@ export class CanvasRenderer {
       this.svg.style.cursor = 'grab'
     })
 
-    // Zoom with scroll
     this.svg.addEventListener('wheel', (e: WheelEvent) => {
       e.preventDefault()
       this.scale = Math.max(0.3, Math.min(2, this.scale - e.deltaY * 0.001))
-      getMainGroup().setAttribute(
+      this.mainGroup.setAttribute(
         'transform',
         `translate(${this.viewOffset.x}, ${this.viewOffset.y}) scale(${this.scale})`
       )
@@ -300,7 +345,6 @@ export class CanvasRenderer {
     window.addEventListener('mouseup', () => {
       if (dragging) {
         dragging = false
-        // Notify extension of position change
         import('../bridge').then(({ bridge }) => {
           bridge.send('NODE_MOVED', { id: node.id, x: node.x, y: node.y })
         })

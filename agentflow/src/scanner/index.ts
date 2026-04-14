@@ -23,15 +23,15 @@ export async function scanWorkspace(
   const config = vscode.workspace.getConfiguration('agentflow')
   const maxDepth: number = config.get('scanDepth') ?? 3
 
-  onProgress('Lendo configuração do projeto...', 5)
+  onProgress('Conhecendo seu projeto...', 5)
   const projectConfig = await parseProjectConfig(root)
 
-  onProgress('Listando arquivos do workspace...', 10)
+  onProgress('Encontrando seus arquivos de código...', 10)
   const files = await walkFiles(maxDepth)
   const testFiles = await walkTestFiles()
   const testFilePaths = new Set(testFiles.map(u => u.fsPath))
 
-  onProgress('Detectando funções e classes...', 30)
+  onProgress('Lendo como seu código está organizado...', 30)
   const functions: FunctionInfo[] = []
   const routes: RouteInfo[] = []
   const models: ModelInfo[] = []
@@ -66,14 +66,14 @@ export async function scanWorkspace(
     scanned++
     const pct = 30 + Math.floor((scanned / files.length) * 40)
     if (scanned % 10 === 0) {
-      onProgress(`Analisando arquivos... (${scanned}/${files.length})`, pct)
+      onProgress(`Lendo arquivos... (${scanned} de ${files.length})`, pct)
     }
   }
 
-  onProgress('Detectando gaps e oportunidades...', 75)
+  onProgress('Procurando onde um agente pode te ajudar...', 75)
   const gaps = detectGaps(functions, routes, root, projectConfig)
 
-  onProgress('Finalizando contexto...', 90)
+  onProgress('Preparando o canvas...', 90)
 
   return {
     projectName: projectConfig.name,

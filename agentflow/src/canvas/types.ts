@@ -20,16 +20,27 @@ export interface CanvasEdge {
   label?: string
 }
 
+export interface TutorialStep {
+  step: number
+  total: number
+  title: string
+  body: string
+  actionLabel: string    // text of the primary button
+  spotlightNodeType?: NodeType  // if set, spotlight first node of this type
+}
+
 // Messages from Extension → Webview
 export type ExtensionToWebview =
-  | { type: 'SCAN_PROGRESS';   payload: { step: string; pct: number } }
-  | { type: 'SCAN_COMPLETE';   payload: { nodes: CanvasNode[]; edges: CanvasEdge[] } }
-  | { type: 'AGENT_SUGGESTED'; payload: { agents: import('../llm/parser').AgentSuggestion[] } }
-  | { type: 'AGENT_STATUS';    payload: { id: string; status: AgentStatus } }
-  | { type: 'RUN_CHUNK';       payload: { agentId: string; text: string } }
-  | { type: 'RUN_COMPLETE';    payload: { run: import('../runtime/types').AgentRun } }
-  | { type: 'INITIAL_STATE';   payload: { agents: import('../runtime/types').AgentDefinition[]; nodes: CanvasNode[] } }
-  | { type: 'ERROR';           payload: { message: string } }
+  | { type: 'SCAN_PROGRESS';    payload: { step: string; pct: number; stage?: 'scan' | 'copilot' | 'canvas' } }
+  | { type: 'SCAN_COMPLETE';    payload: { nodes: CanvasNode[]; edges: CanvasEdge[] } }
+  | { type: 'AGENT_SUGGESTED';  payload: { agents: import('../llm/parser').AgentSuggestion[] } }
+  | { type: 'AGENT_STATUS';     payload: { id: string; status: AgentStatus } }
+  | { type: 'RUN_CHUNK';        payload: { agentId: string; text: string } }
+  | { type: 'RUN_COMPLETE';     payload: { run: import('../runtime/types').AgentRun } }
+  | { type: 'INITIAL_STATE';    payload: { agents: import('../runtime/types').AgentDefinition[]; nodes: CanvasNode[]; hasAgents: boolean } }
+  | { type: 'ERROR';            payload: { message: string; detail?: string } }
+  | { type: 'TUTORIAL_STEP';    payload: TutorialStep }
+  | { type: 'PROMPT_SUGGESTED'; payload: { agentId: string; prompt: string } }
 
 // Messages from Webview → Extension
 export type WebviewToExtension =
@@ -41,3 +52,6 @@ export type WebviewToExtension =
   | { type: 'DELETE_AGENT';     payload: { id: string } }
   | { type: 'NODE_MOVED';       payload: { id: string; x: number; y: number } }
   | { type: 'REQUEST_STATE' }
+  | { type: 'TUTORIAL_ADVANCE'; payload: { step: number } }
+  | { type: 'TUTORIAL_SKIP' }
+  | { type: 'SUGGEST_PROMPT';   payload: { agentId: string; agentName: string; agentDescription: string } }

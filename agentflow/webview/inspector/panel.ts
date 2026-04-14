@@ -1,8 +1,48 @@
 import { bridge } from '../bridge'
 import { CanvasNodeView } from '../canvas/renderer'
 
+const ALL_SKILLS = [
+  {
+    id: 'read-file',
+    label: '📂 Ler arquivo',
+    tooltip: 'O agente pode abrir e ler arquivos do seu projeto para ter contexto antes de responder',
+  },
+  {
+    id: 'write-file',
+    label: '✍️ Escrever arquivo',
+    tooltip: 'O agente pode criar ou modificar arquivos automaticamente com o código que gerou',
+  },
+  {
+    id: 'run-terminal',
+    label: '▷ Executar no terminal',
+    tooltip: 'O agente pode rodar comandos seguros (npm test, tsc, etc.) depois de gerar o código',
+  },
+  {
+    id: 'search-code',
+    label: '🔍 Buscar no projeto',
+    tooltip: 'O agente pesquisa trechos do seu código para ter mais contexto antes de responder',
+  },
+  {
+    id: 'notify',
+    label: '🔔 Notificar ao concluir',
+    tooltip: 'O agente envia uma notificação no VS Code quando terminar de executar',
+  },
+]
+
+const TRIGGER_OPTIONS = [
+  { value: 'manual',     label: 'Somente quando eu pedir' },
+  { value: 'file_save',  label: 'Automaticamente ao salvar um arquivo' },
+  { value: 'on_startup', label: 'Toda vez que eu abrir o projeto' },
+]
+
+const GLOB_EXAMPLES = `Exemplos de padrões:
+  src/**/*.ts    → todos os TypeScript em src/
+  **/*.test.ts   → todos os arquivos de teste
+  src/services/* → arquivos direto em services/`
+
 export class InspectorPanel {
   private container: HTMLElement
+  private currentAgentId: string | null = null
 
   constructor(container: HTMLElement) {
     this.container = container
@@ -11,9 +51,9 @@ export class InspectorPanel {
   show(node: CanvasNodeView): void {
     this.container.innerHTML = ''
     this.container.style.display = 'flex'
+    this.currentAgentId = null
 
-    const header = this.createHeader(node)
-    this.container.appendChild(header)
+    this.container.appendChild(this.createHeader(node))
 
     if (node.type === 'agent') {
       this.renderAgentInspector(node)
@@ -25,6 +65,17 @@ export class InspectorPanel {
   hide(): void {
     this.container.style.display = 'none'
     this.container.innerHTML = ''
+    this.currentAgentId = null
+  }
+
+  /** Called by main.ts when extension sends PROMPT_SUGGESTED */
+  fillPrompt(agentId: string, prompt: string): void {
+    if (this.currentAgentId !== agentId) return
+    const textarea = document.getElementById('agent-prompt-input') as HTMLTextAreaElement | null
+    if (textarea) {
+      textarea.value = prompt
+      textarea.classList.add('textarea--filled')
+    }
   }
 
   private createHeader(node: CanvasNodeView): HTMLElement {
@@ -33,56 +84,66 @@ export class InspectorPanel {
 
     const title = document.createElement('div')
     title.className = 'inspector-title'
-    title.textContent = `${node.emoji ?? ''} ${node.label}`
-    h.appendChild(title)
+    title.textContent = `${node.emoji ?? ''} ${node.label}`.trim()
 
     const close = document.createElement('button')
     close.className = 'inspector-close'
+    close.title = 'Fechar'
     close.textContent = '✕'
     close.addEventListener('click', () => this.hide())
-    h.appendChild(close)
 
+    h.appendChild(title)
+    h.appendChild(close)
     return h
   }
 
   private renderAgentInspector(node: CanvasNodeView): void {
     const data = node.data as Record<string, unknown>
     const agentId = String(data.id ?? node.id.replace('agent-', ''))
+    this.currentAgentId = agentId
 
-    // Description
-    this.addSection('Descrição', String(data.description ?? data.why ?? ''))
-
-    // Why suggested
+    // Why this agent was suggested
     if (data.why) {
-      this.addSection('Por que sugerido', String(data.why))
+      this.addSection('Por que foi sugerido para o seu projeto', String(data.why), 'inspector-why')
+    } else if (data.description) {
+      this.addSection('O que este agente faz', String(data.description))
     }
 
-    // Prompt editor
-    this.addPromptEditor(String(data.promptTemplate ?? data.prompt ?? ''))
-
-    // Skills checklist
-    const skills = (data.skills as string[]) ?? []
-    this.addSkillsSection(skills)
-
-    // Trigger config
+    this.addPromptEditor(String(data.promptTemplate ?? data.prompt ?? ''), agentId, String(data.name ?? ''), String(data.description ?? ''))
+    this.addSkillsSection((data.skills as string[]) ?? [])
     this.addTriggerConfig(data)
-
-    // Actions
     this.addActions(agentId, data, node)
   }
 
   private renderInfoPanel(node: CanvasNodeView): void {
-    const entries = Object.entries(node.data).filter(([k]) => !['data'].includes(k))
-    entries.slice(0, 8).forEach(([key, val]) => {
-      if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') {
-        this.addSection(formatKey(key), String(val))
+    const LABELS: Record<string, string> = {
+      name: 'Nome', file: 'Arquivo', line: 'Linha', method: 'Método',
+      path: 'Rota', handler: 'Handler', orm: 'ORM',
+      isAsync: 'Assíncrona', isExported: 'Exportada',
+      hasTests: 'Tem testes', hasJsDoc: 'Tem documentação',
+    }
+
+    const data = node.data as Record<string, unknown>
+    Object.entries(data)
+      .filter(([k, v]) => k in LABELS && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'))
+      .slice(0, 8)
+      .forEach(([key, val]) => {
+        const display = typeof val === 'boolean' ? (val ? 'Sim' : 'Não') : String(val)
+        this.addSection(LABELS[key] ?? key, display)
+      })
+
+    // Show flags for functions
+    if (node.type === 'function') {
+      const flags = (data as { flags?: string[] }).flags ?? []
+      if (flags.length) {
+        this.addSection('Alertas detectados', flags.join(' · '), 'inspector-flags')
       }
-    })
+    }
   }
 
-  private addSection(label: string, content: string): void {
+  private addSection(label: string, content: string, extraClass = ''): void {
     const section = document.createElement('div')
-    section.className = 'inspector-section'
+    section.className = `inspector-section ${extraClass}`.trim()
 
     const lbl = document.createElement('div')
     lbl.className = 'inspector-label'
@@ -97,40 +158,59 @@ export class InspectorPanel {
     this.container.appendChild(section)
   }
 
-  private addPromptEditor(defaultPrompt: string): void {
+  private addPromptEditor(defaultPrompt: string, agentId: string, agentName: string, agentDescription: string): void {
     const section = document.createElement('div')
     section.className = 'inspector-section'
 
+    const headerRow = document.createElement('div')
+    headerRow.className = 'inspector-label-row'
+
     const lbl = document.createElement('div')
     lbl.className = 'inspector-label'
-    lbl.textContent = 'Prompt do agente'
+    lbl.textContent = 'Instruções para o agente'
+
+    const suggestBtn = document.createElement('button')
+    suggestBtn.className = 'btn-link-small'
+    suggestBtn.textContent = '✨ Sugerir com Copilot'
+    suggestBtn.title = 'Pedir ao Copilot para criar um prompt para este agente'
+    suggestBtn.addEventListener('click', () => {
+      suggestBtn.textContent = '⏳ Gerando...'
+      suggestBtn.disabled = true
+      bridge.send('SUGGEST_PROMPT', { agentId, agentName, agentDescription })
+      // Re-enable after 10s as fallback
+      setTimeout(() => {
+        suggestBtn.textContent = '✨ Sugerir com Copilot'
+        suggestBtn.disabled = false
+      }, 10000)
+    })
+
+    headerRow.appendChild(lbl)
+    headerRow.appendChild(suggestBtn)
 
     const textarea = document.createElement('textarea')
     textarea.className = 'inspector-textarea'
+    textarea.id = 'agent-prompt-input'
     textarea.value = defaultPrompt
     textarea.rows = 6
-    textarea.id = 'agent-prompt-input'
+    textarea.placeholder = 'Descreva como o agente deve se comportar.\n\nEx: "Você revisa código TypeScript e sugere melhorias de legibilidade. Foque em nomes de variáveis e comentários."'
 
-    section.appendChild(lbl)
+    const hint = document.createElement('div')
+    hint.className = 'inspector-hint'
+    hint.textContent = 'Sem ideia do que escrever? Use o botão "Sugerir com Copilot" acima.'
+
+    section.appendChild(headerRow)
     section.appendChild(textarea)
+    if (!defaultPrompt) section.appendChild(hint)
     this.container.appendChild(section)
   }
 
   private addSkillsSection(selectedSkills: string[]): void {
-    const ALL_SKILLS = [
-      { id: 'read-file', label: '📂 Ler arquivo' },
-      { id: 'write-file', label: '✍️ Escrever arquivo' },
-      { id: 'run-terminal', label: '▷ Terminal' },
-      { id: 'search-code', label: '🔍 Buscar código' },
-      { id: 'notify', label: '🔔 Notificar' },
-    ]
-
     const section = document.createElement('div')
     section.className = 'inspector-section'
 
     const lbl = document.createElement('div')
     lbl.className = 'inspector-label'
-    lbl.textContent = 'Skills ativas'
+    lbl.textContent = 'O que este agente pode fazer'
     section.appendChild(lbl)
 
     ALL_SKILLS.forEach(skill => {
@@ -143,11 +223,26 @@ export class InspectorPanel {
       checkbox.checked = selectedSkills.includes(skill.id)
       checkbox.className = 'inspector-checkbox'
 
-      const span = document.createElement('span')
-      span.textContent = skill.label
+      const labelSpan = document.createElement('span')
+      labelSpan.textContent = skill.label
+
+      const tooltipWrap = document.createElement('span')
+      tooltipWrap.className = 'skill-tooltip-wrap'
+
+      const tooltipIcon = document.createElement('span')
+      tooltipIcon.className = 'skill-tooltip-icon'
+      tooltipIcon.textContent = '?'
+
+      const tooltipBox = document.createElement('span')
+      tooltipBox.className = 'skill-tooltip-box'
+      tooltipBox.textContent = skill.tooltip
+
+      tooltipWrap.appendChild(tooltipIcon)
+      tooltipWrap.appendChild(tooltipBox)
 
       row.appendChild(checkbox)
-      row.appendChild(span)
+      row.appendChild(labelSpan)
+      row.appendChild(tooltipWrap)
       section.appendChild(row)
     })
 
@@ -160,39 +255,54 @@ export class InspectorPanel {
 
     const lbl = document.createElement('div')
     lbl.className = 'inspector-label'
-    lbl.textContent = 'Trigger'
+    lbl.textContent = 'Quando executar?'
 
     const select = document.createElement('select')
     select.className = 'inspector-select'
     select.id = 'agent-trigger-select'
 
-    const options = [
-      { value: 'manual', label: 'Manual' },
-      { value: 'file_save', label: 'Ao salvar arquivo' },
-      { value: 'on_startup', label: 'Ao abrir o projeto' },
-    ]
+    const triggerType = (data.trigger as { type?: string })?.type ?? String(data.trigger ?? 'manual')
 
-    const trigger = (data.trigger as { type?: string })?.type ?? data.trigger ?? 'manual'
-
-    options.forEach(opt => {
+    TRIGGER_OPTIONS.forEach(opt => {
       const op = document.createElement('option')
       op.value = opt.value
       op.textContent = opt.label
-      op.selected = opt.value === trigger
+      op.selected = opt.value === triggerType
       select.appendChild(op)
     })
+
+    const patternWrap = document.createElement('div')
+    patternWrap.className = 'inspector-pattern-wrap'
+    patternWrap.style.display = triggerType === 'file_save' ? 'block' : 'none'
+
+    const patternLabel = document.createElement('div')
+    patternLabel.className = 'inspector-sublabel'
+    patternLabel.textContent = 'Quais arquivos monitorar?'
 
     const patternInput = document.createElement('input')
     patternInput.type = 'text'
     patternInput.className = 'inspector-input'
     patternInput.id = 'agent-trigger-pattern'
-    patternInput.placeholder = 'Pattern (ex: src/**/*.ts)'
-    const triggerPattern = (data.trigger as { pattern?: string })?.pattern ?? data.triggerDetail as string ?? ''
-    patternInput.value = String(triggerPattern)
+    patternInput.placeholder = 'Ex: src/**/*.ts (todos os TypeScript em src/)'
+    const existingPattern = (data.trigger as { pattern?: string })?.pattern ?? String(data.triggerDetail ?? '')
+    patternInput.value = existingPattern
+
+    const patternHint = document.createElement('div')
+    patternHint.className = 'inspector-hint'
+    patternHint.style.whiteSpace = 'pre'
+    patternHint.textContent = GLOB_EXAMPLES
+
+    patternWrap.appendChild(patternLabel)
+    patternWrap.appendChild(patternInput)
+    patternWrap.appendChild(patternHint)
+
+    select.addEventListener('change', () => {
+      patternWrap.style.display = select.value === 'file_save' ? 'block' : 'none'
+    })
 
     section.appendChild(lbl)
     section.appendChild(select)
-    section.appendChild(patternInput)
+    section.appendChild(patternWrap)
     this.container.appendChild(section)
   }
 
@@ -209,21 +319,31 @@ export class InspectorPanel {
       bridge.send('ACTIVATE_AGENT', agentDef)
       activateBtn.textContent = '✓ Ativado!'
       activateBtn.disabled = true
+      activateBtn.style.background = '#22c55e'
     })
 
     const runBtn = document.createElement('button')
     runBtn.className = 'btn btn-secondary'
     runBtn.textContent = '▷ Testar agora'
+    runBtn.title = 'Executa o agente manualmente uma vez para você ver o resultado'
     runBtn.addEventListener('click', () => {
+      runBtn.textContent = '⏳ Executando...'
+      runBtn.disabled = true
       bridge.send('RUN_AGENT', { id: agentId, context: 'manual test' })
+      setTimeout(() => {
+        runBtn.textContent = '▷ Testar agora'
+        runBtn.disabled = false
+      }, 15000)
     })
 
     const deleteBtn = document.createElement('button')
     deleteBtn.className = 'btn btn-danger'
-    deleteBtn.textContent = '✕ Remover'
+    deleteBtn.textContent = 'Remover agente'
     deleteBtn.addEventListener('click', () => {
-      bridge.send('DELETE_AGENT', { id: agentId })
-      this.hide()
+      if (confirm(`Remover o agente "${String(data.name ?? agentId)}"?`)) {
+        bridge.send('DELETE_AGENT', { id: agentId })
+        this.hide()
+      }
     })
 
     section.appendChild(activateBtn)
@@ -232,22 +352,18 @@ export class InspectorPanel {
     this.container.appendChild(section)
   }
 
-  private buildAgentDefinition(
-    agentId: string,
-    data: Record<string, unknown>,
-    _node: CanvasNodeView
-  ): Record<string, unknown> {
-    const prompt = (document.getElementById('agent-prompt-input') as HTMLTextAreaElement)?.value
+  private buildAgentDefinition(agentId: string, data: Record<string, unknown>, _node: CanvasNodeView): Record<string, unknown> {
+    const prompt = (document.getElementById('agent-prompt-input') as HTMLTextAreaElement | null)?.value
       ?? String(data.promptTemplate ?? data.prompt ?? '')
 
-    const triggerType = (document.getElementById('agent-trigger-select') as HTMLSelectElement)?.value
+    const triggerType = (document.getElementById('agent-trigger-select') as HTMLSelectElement | null)?.value
       ?? 'manual'
 
-    const triggerPattern = (document.getElementById('agent-trigger-pattern') as HTMLInputElement)?.value
+    const triggerPattern = (document.getElementById('agent-trigger-pattern') as HTMLInputElement | null)?.value
       ?? ''
 
-    const allCheckboxes = this.container.querySelectorAll<HTMLInputElement>('.inspector-checkbox:checked')
-    const skills = Array.from(allCheckboxes).map(c => c.value)
+    const allChecked = this.container.querySelectorAll<HTMLInputElement>('.inspector-checkbox:checked')
+    const skills = Array.from(allChecked).map(c => c.value)
 
     return {
       id: agentId,
@@ -265,8 +381,4 @@ export class InspectorPanel {
       active: true,
     }
   }
-}
-
-function formatKey(key: string): string {
-  return key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())
 }
