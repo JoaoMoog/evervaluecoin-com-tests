@@ -1,0 +1,84 @@
+{
+  "name": "agentflow",
+  "displayName": "AgentFlow",
+  "description": "Visual canvas de agentes de IA para o seu repositório, powered by GitHub Copilot",
+  "version": "0.1.0",
+  "publisher": "agentflow",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other", "Machine Learning"],
+  "keywords": ["ai", "agents", "copilot", "automation", "canvas"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentflow",
+          "title": "AgentFlow",
+          "icon": "assets/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentflow": [
+        {
+          "id": "agentflow.canvas",
+          "type": "webview",
+          "name": "Canvas"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "agentflow.scan",
+        "title": "AgentFlow: Varrer repositório"
+      },
+      {
+        "command": "agentflow.runAll",
+        "title": "AgentFlow: Executar todos os agentes"
+      },
+      {
+        "command": "agentflow.openCanvas",
+        "title": "AgentFlow: Abrir canvas"
+      }
+    ],
+    "configuration": {
+      "title": "AgentFlow",
+      "properties": {
+        "agentflow.fallbackApiKey": {
+          "type": "string",
+          "description": "API key alternativa se Copilot não estiver disponível",
+          "default": ""
+        },
+        "agentflow.scanDepth": {
+          "type": "number",
+          "default": 3,
+          "description": "Profundidade máxima de pastas para varredura"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.config.js",
+    "build:watch": "node esbuild.config.js --watch",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "typecheck:webview": "tsc -p tsconfig.webview.json --noEmit"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "esbuild": "^0.21.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.4.0"
+  }
+}

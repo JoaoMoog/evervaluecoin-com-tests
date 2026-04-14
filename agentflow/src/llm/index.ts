@@ -1,0 +1,5 @@
+export { CopilotBridge } from './bridge'
+export type { LLMMessage, StreamChunk } from './bridge'
+export { PROMPTS } from './prompts'
+export { parseAgentSuggestions, parseJsonResponse } from './parser'
+export type { AgentSuggestion } from './parser'
