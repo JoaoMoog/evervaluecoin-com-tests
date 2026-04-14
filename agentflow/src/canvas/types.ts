@@ -10,7 +10,7 @@ export interface CanvasNode {
   emoji?: string
   x: number
   y: number
-  data: Record<string, unknown>
+  data: object
 }
 
 export interface CanvasEdge {
