@@ -1,7 +1,7 @@
 import * as vscode from 'vscode'
 import { CanvasPanel } from './panel'
 import { buildCanvasNodes } from './stateSync'
-import { WebviewToExtension, TutorialStep } from './types'
+import { WebviewToExtension, TutorialStep, BuilderState } from './types'
 import { scanWorkspace, buildContext } from '../scanner/index'
 import { CopilotBridge, PROMPTS, parseAgentSuggestions } from '../llm/index'
 import { AgentExecutor, TriggerManager, AgentDefinition } from '../runtime/index'
@@ -96,6 +96,18 @@ export class MessageHandler {
       case 'SUGGEST_PROMPT':
         await this.handleSuggestPrompt(msg.payload, panel)
         break
+
+      case 'OPEN_BUILDER':
+        await this.handleOpenBuilder(msg.payload, panel)
+        break
+
+      case 'BUILDER_NEXT':
+        await this.handleBuilderNext(msg.payload, panel)
+        break
+
+      case 'CREATE_AGENT_FROM_BUILDER':
+        await this.handleCreateAgentFromBuilder(msg.payload.state, panel)
+        break
     }
   }
 
@@ -140,7 +152,7 @@ export class MessageHandler {
       panel.send({ type: 'SCAN_PROGRESS', payload: { step: 'Preparando o canvas...', pct: 95, stage: 'canvas' } })
 
       const existingAgents = await this.agentStore.list()
-      const { nodes, edges } = buildCanvasNodes(repoCtx, suggestions, existingAgents)
+      const { nodes, edges } = buildCanvasNodes(repoCtx, suggestions, existingAgents, repoCtx.flows)
 
       panel.send({ type: 'SCAN_COMPLETE', payload: { nodes, edges } })
       panel.send({ type: 'AGENT_SUGGESTED', payload: { agents: suggestions } })
@@ -248,5 +260,149 @@ Retorne APENAS o prompt, sem explicações ou formatação extra.`,
       type: 'PROMPT_SUGGESTED',
       payload: { agentId: payload.agentId, prompt: prompt.trim() },
     })
+  }
+
+  private async handleOpenBuilder(
+    payload: { flowDomain?: string; flowLabel?: string; flowFunctions?: string[] },
+    panel: CanvasPanel
+  ): Promise<void> {
+    // Send builder context back to webview — wizard manages its own step state
+    panel.send({
+      type: 'BUILDER_STEP',
+      payload: {
+        step: 1,
+        total: 5,
+        title: 'Quando este agente vai executar?',
+        body: 'Escolha o gatilho do agente.',
+        fields: [],
+        flowDomain:    payload.flowDomain,
+        flowLabel:     payload.flowLabel,
+        flowFunctions: payload.flowFunctions,
+      },
+    })
+  }
+
+  private async handleBuilderNext(
+    payload: { step: number; values: Record<string, unknown> },
+    panel: CanvasPanel
+  ): Promise<void> {
+    // Only step 5 needs Copilot (prompt generation)
+    if (payload.step !== 5) return
+    if (!this.bridge.isAvailable()) {
+      panel.send({
+        type: 'BUILDER_PROMPT_READY',
+        payload: {
+          prompt: `Você é um agente especializado. Seu objetivo é ${payload.values.customGoal ?? payload.values.goalType}.`,
+          name: String(payload.values.name ?? 'Meu Agente'),
+          emoji: String(payload.values.emoji ?? '🤖'),
+          description: String(payload.values.customGoal ?? payload.values.goalType ?? ''),
+        },
+      })
+      return
+    }
+
+    const flowCtx = payload.values.flowLabel
+      ? `O agente vai atuar no fluxo de "${payload.values.flowLabel}" com as funções: ${(payload.values.flowFunctions as string[] | undefined)?.slice(0, 5).join(', ') ?? 'não especificadas'}.`
+      : payload.values.customContext
+      ? `Contexto do projeto: ${payload.values.customContext}`
+      : 'Contexto: projeto geral.'
+
+    const goalMap: Record<string, string> = {
+      test:     'escrever e melhorar testes',
+      security: 'revisar e corrigir problemas de segurança',
+      docs:     'documentar o código com JSDoc e comentários',
+      review:   'revisar qualidade, clean code e performance',
+      custom:   String(payload.values.customGoal ?? ''),
+    }
+    const goalDesc = goalMap[String(payload.values.goalType)] ?? String(payload.values.goalType)
+
+    const triggerDesc = payload.values.trigger === 'file_save'
+      ? `Ele é acionado ao salvar arquivos que correspondem a "${payload.values.triggerPattern ?? '**/*'}".`
+      : payload.values.trigger === 'on_startup'
+      ? 'Ele executa automaticamente quando o projeto é aberto.'
+      : 'Ele executa quando o usuário pedir manualmente.'
+
+    const raw = await this.bridge.send([{
+      role: 'user',
+      content: `Você é especialista em criar agentes de IA para desenvolvimento de software.
+
+Crie um system prompt completo em português para um agente com as seguintes características:
+- Objetivo: ${goalDesc}
+- ${flowCtx}
+- ${triggerDesc}
+
+O prompt deve:
+1. Definir claramente o papel e objetivo do agente (1-2 frases)
+2. Listar as etapas que ele deve seguir (numeradas, máximo 5)
+3. Especificar o formato de saída esperado
+4. Ser conciso (máximo 12 linhas)
+
+Também sugira:
+- Um nome curto e descritivo para o agente (máximo 4 palavras)
+- Um emoji representativo
+- Uma descrição curta de 1 frase
+
+Responda EXATAMENTE no formato JSON (sem markdown):
+{"prompt": "...", "name": "...", "emoji": "...", "description": "..."}`,
+    }])
+
+    try {
+      const jsonMatch = raw.match(/\{[\s\S]*\}/)
+      const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null
+      if (parsed?.prompt) {
+        panel.send({
+          type: 'BUILDER_PROMPT_READY',
+          payload: {
+            prompt:      String(parsed.prompt),
+            name:        String(parsed.name ?? payload.values.name ?? 'Meu Agente'),
+            emoji:       String(parsed.emoji ?? payload.values.emoji ?? '🤖'),
+            description: String(parsed.description ?? ''),
+          },
+        })
+        return
+      }
+    } catch { /* fall through */ }
+
+    // Fallback if JSON parsing fails
+    panel.send({
+      type: 'BUILDER_PROMPT_READY',
+      payload: {
+        prompt:      raw.trim().slice(0, 800),
+        name:        String(payload.values.name ?? 'Meu Agente'),
+        emoji:       String(payload.values.emoji ?? '🤖'),
+        description: goalDesc,
+      },
+    })
+  }
+
+  private async handleCreateAgentFromBuilder(
+    state: BuilderState,
+    panel: CanvasPanel
+  ): Promise<void> {
+    const id = `agent-${(state.name ?? 'custom').toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 30)}-${Date.now()}`
+
+    const agent: AgentDefinition = {
+      id,
+      name:        state.name        ?? 'Meu Agente',
+      emoji:       state.emoji       ?? '🤖',
+      description: state.description ?? '',
+      prompt:      state.prompt      ?? '',
+      model:       'copilot/gpt-4o',
+      active:      false,
+      skills:      state.skills ?? ['read-file'],
+      trigger: {
+        type:    (state.trigger as AgentDefinition['trigger']['type']) ?? 'manual',
+        pattern: state.trigger === 'file_save' ? (state.triggerPattern ?? '') : undefined,
+      },
+      config: {},
+    }
+
+    await this.agentStore.save(agent)
+    this.logger.info(`Agente "${agent.name}" criado via Builder`)
+
+    panel.send({ type: 'AGENT_STATUS', payload: { id, status: 'idle' } })
+
+    // Trigger a lightweight state refresh so the canvas shows the new agent
+    await this.handleRequestState(panel)
   }
 }

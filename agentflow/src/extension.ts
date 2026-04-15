@@ -91,12 +91,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
 
       const panel = CanvasPanel.create(context, msg => messageHandler.handle(msg, panel))
-      for (const agent of active) {
-        await messageHandler.handle({
+      await Promise.all(active.map(agent =>
+        messageHandler.handle({
           type: 'RUN_AGENT',
           payload: { id: agent.id, context: 'manual run all' },
         }, panel)
-      }
+      ))
     })
   )
 

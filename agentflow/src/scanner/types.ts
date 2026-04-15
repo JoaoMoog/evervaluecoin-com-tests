@@ -49,4 +49,5 @@ export interface RepoContext {
   scripts: Record<string, string>
   gaps: GapInfo[]
   stats: RepoStats
+  flows: import('./flowDetector').FlowInfo[]
 }

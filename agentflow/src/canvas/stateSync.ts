@@ -1,35 +1,45 @@
 import { RepoContext } from '../scanner/index'
+import { FlowInfo } from '../scanner/flowDetector'
 import { AgentSuggestion } from '../llm/parser'
 import { AgentDefinition } from '../runtime/types'
 import { CanvasNode, CanvasEdge } from './types'
 
-let nodeIdCounter = 1
+const SKILL_LABELS: Record<string, string> = {
+  'read-file': '📂 Ler arquivo',
+  'write-file': '✍️ Escrever',
+  'run-terminal': '▷ Terminal',
+  'search-code': '🔍 Buscar',
+  'notify': '🔔 Notificar',
+}
+
+// Column layout constants
+const COL_FN    = 60
+const COL_AGENT = 420
+const COL_SKILL = 680
+const GRID_Y    = 110
 
 /**
  * Converts a scanned RepoContext + agent suggestions into canvas nodes and edges.
+ * Uses a local counter per call — no global mutable state.
  */
 export function buildCanvasNodes(
   ctx: RepoContext,
   suggestions: AgentSuggestion[],
-  existingAgents: AgentDefinition[] = []
+  existingAgents: AgentDefinition[] = [],
+  flows: FlowInfo[] = []
 ): { nodes: CanvasNode[]; edges: CanvasEdge[] } {
-  nodeIdCounter = 1
+  let counter = 0
+  const nextId = () => ++counter
+
   const nodes: CanvasNode[] = []
   const edges: CanvasEdge[] = []
 
-  const GRID_X = 180
-  const GRID_Y = 120
-  const COL_FN = 60
-  const COL_AGENT = 400
-  const COL_SKILL = 720
-
-  // Function nodes (top 10 by gap priority)
+  // ── Function nodes (top 10 by gap priority) ──────────────────────────────
   const topFunctions = ctx.functions
     .filter(f => f.isExported)
     .sort((a, b) => {
-      const sa = (!a.hasTests ? 2 : 0) + (!a.hasJsDoc ? 1 : 0)
-      const sb = (!b.hasTests ? 2 : 0) + (!b.hasJsDoc ? 1 : 0)
-      return sb - sa
+      const score = (f: typeof a) => (!f.hasTests ? 2 : 0) + (!f.hasJsDoc ? 1 : 0)
+      return score(b) - score(a)
     })
     .slice(0, 10)
 
@@ -45,7 +55,7 @@ export function buildCanvasNodes(
     })
   })
 
-  // Route nodes
+  // ── Route nodes ───────────────────────────────────────────────────────────
   ctx.routes.slice(0, 5).forEach((route, i) => {
     nodes.push({
       id: `route-${nextId()}`,
@@ -58,7 +68,21 @@ export function buildCanvasNodes(
     })
   })
 
-  // Agent nodes (from suggestions + existing)
+  // ── Flow group nodes ──────────────────────────────────────────────────────
+  flows.slice(0, 6).forEach((flow, i) => {
+    nodes.push({
+      id: `flow-${flow.domain}`,
+      type: 'trigger',
+      label: flow.label,
+      sublabel: `${flow.files.length} arquivo(s)`,
+      emoji: flow.emoji,
+      x: COL_FN - 10,
+      y: 60 + (topFunctions.length + ctx.routes.slice(0, 5).length + i) * GRID_Y,
+      data: flow,
+    })
+  })
+
+  // ── Agent nodes ───────────────────────────────────────────────────────────
   const allAgents: (AgentSuggestion | AgentDefinition)[] = [
     ...existingAgents,
     ...suggestions.filter(s => !existingAgents.find(a => a.id === s.id)),
@@ -66,47 +90,56 @@ export function buildCanvasNodes(
 
   allAgents.slice(0, 8).forEach((agent, i) => {
     const isExisting = 'active' in agent
+    const pos = isExisting && agent.canvasPosition
+      ? agent.canvasPosition
+      : { x: COL_AGENT, y: 60 + i * GRID_Y }
+
+    const agentNodeId = `agent-${agent.id}`
     const agentNode: CanvasNode = {
-      id: `agent-${agent.id}`,
+      id: agentNodeId,
       type: 'agent',
       label: agent.name,
       sublabel: agent.description,
       emoji: agent.emoji,
-      x: isExisting ? (agent.canvasPosition?.x ?? COL_AGENT) : COL_AGENT,
-      y: isExisting ? (agent.canvasPosition?.y ?? 60 + i * GRID_Y) : 60 + i * GRID_Y,
+      x: pos.x,
+      y: pos.y,
       data: agent,
     }
     nodes.push(agentNode)
 
-    // Skills for this agent
-    const skills = 'skills' in agent ? agent.skills : []
+    // Skill nodes + edges
+    const skills = agent.skills ?? []
+    const seenSkills = new Set<string>()
     skills.slice(0, 3).forEach((skillId, si) => {
-      const skillNodeId = `skill-${skillId}-${agentNode.id}`
-      if (!nodes.find(n => n.id === skillNodeId)) {
-        nodes.push({
-          id: skillNodeId,
-          type: 'skill',
-          label: formatSkillLabel(skillId),
-          x: COL_SKILL,
-          y: agentNode.y + si * 50,
-          data: { skillId },
-        })
+      const skillNodeId = `skill-${skillId}`
+      if (!seenSkills.has(skillNodeId)) {
+        seenSkills.add(skillNodeId)
+        if (!nodes.find(n => n.id === skillNodeId)) {
+          nodes.push({
+            id: skillNodeId,
+            type: 'skill',
+            label: SKILL_LABELS[skillId] ?? skillId,
+            x: COL_SKILL,
+            y: agentNode.y + si * 52,
+            data: { skillId },
+          })
+        }
       }
       edges.push({
-        id: `edge-${agentNode.id}-${skillNodeId}`,
-        sourceId: agentNode.id,
+        id: `edge-${agentNodeId}-${skillNodeId}-${nextId()}`,
+        sourceId: agentNodeId,
         targetId: skillNodeId,
       })
     })
 
-    // Connect functions to agents based on description overlap
+    // Connect top functions to this agent
     topFunctions.slice(0, 3).forEach(fn => {
-      const fnNode = nodes.find(n => n.id.startsWith(`fn-${fn.name}`))
+      const fnNode = nodes.find(n => n.label === `${fn.name}()` && n.type === 'function')
       if (fnNode) {
         edges.push({
-          id: `edge-${fnNode.id}-${agentNode.id}`,
+          id: `edge-${fnNode.id}-${agentNodeId}-${nextId()}`,
           sourceId: fnNode.id,
-          targetId: agentNode.id,
+          targetId: agentNodeId,
         })
       }
     })
@@ -115,25 +148,10 @@ export function buildCanvasNodes(
   return { nodes, edges }
 }
 
-function nextId(): number {
-  return nodeIdCounter++
-}
-
 function buildFlags(fn: { hasTests: boolean; hasJsDoc: boolean; isAsync: boolean }): string[] {
   const flags: string[] = []
   if (!fn.hasTests) flags.push('sem testes')
   if (!fn.hasJsDoc) flags.push('sem docs')
   if (fn.isAsync) flags.push('async')
   return flags
-}
-
-function formatSkillLabel(id: string): string {
-  const labels: Record<string, string> = {
-    'read-file': '📂 Ler arquivo',
-    'write-file': '✍️ Escrever',
-    'run-terminal': '▷ Terminal',
-    'search-code': '🔍 Buscar',
-    'notify': '🔔 Notificar',
-  }
-  return labels[id] ?? id
 }

@@ -139,6 +139,28 @@ export class InspectorPanel {
         this.addSection('Alertas detectados', flags.join(' · '), 'inspector-flags')
       }
     }
+
+    // For flow (trigger) nodes: offer to create an agent from this flow
+    if (node.type === 'trigger') {
+      const flowData = data as { domain?: string; label?: string; functions?: string[]; agentSuggestions?: unknown[] }
+      const section = document.createElement('div')
+      section.className = 'inspector-actions'
+
+      const createBtn = document.createElement('button')
+      createBtn.className = 'btn btn-primary'
+      createBtn.textContent = '+ Criar Agente para este Fluxo'
+      createBtn.addEventListener('click', () => {
+        bridge.send('OPEN_BUILDER', {
+          flowDomain:    flowData.domain,
+          flowLabel:     flowData.label ?? node.label,
+          flowFunctions: flowData.functions ?? [],
+        })
+        this.hide()
+      })
+
+      section.appendChild(createBtn)
+      this.container.appendChild(section)
+    }
   }
 
   private addSection(label: string, content: string, extraClass = ''): void {

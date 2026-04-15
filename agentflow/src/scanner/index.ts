@@ -5,6 +5,7 @@ import { parseFunctions } from './tsParser'
 import { parseRoutes } from './routeParser'
 import { parseModels } from './modelParser'
 import { parseProjectConfig } from './configParser'
+import { detectFlows } from './flowDetector'
 import { RepoContext, FunctionInfo, RouteInfo, ModelInfo, GapInfo } from './types'
 
 export { RepoContext, FunctionInfo, RouteInfo, ModelInfo, GapInfo }
@@ -12,8 +13,11 @@ export { buildContext } from './contextBuilder'
 
 type ProgressFn = (step: string, pct: number) => void
 
+const BATCH_SIZE = 10
+
 /**
  * Orchestrates a full workspace scan and returns a RepoContext.
+ * Files are processed in parallel batches of BATCH_SIZE for performance.
  */
 export async function scanWorkspace(
   _context: vscode.ExtensionContext,
@@ -36,39 +40,42 @@ export async function scanWorkspace(
   const routes: RouteInfo[] = []
   const models: ModelInfo[] = []
 
+  // Process files in parallel batches to improve throughput
   let scanned = 0
-  for (const uri of files) {
-    const relPath = path.relative(root, uri.fsPath)
-    let content = ''
-    try {
-      const bytes = await vscode.workspace.fs.readFile(uri)
-      content = Buffer.from(bytes).toString('utf-8')
-    } catch {
-      continue
-    }
+  for (let i = 0; i < files.length; i += BATCH_SIZE) {
+    const batch = files.slice(i, i + BATCH_SIZE)
+    await Promise.all(batch.map(async uri => {
+      const relPath = path.relative(root, uri.fsPath)
+      let content = ''
+      try {
+        const bytes = await vscode.workspace.fs.readFile(uri)
+        content = Buffer.from(bytes).toString('utf-8')
+      } catch {
+        return
+      }
 
-    // Parse functions from TS/JS files
-    if (/\.[tj]sx?$/.test(uri.fsPath)) {
-      const fns = parseFunctions(content, relPath)
-      // Check if a test file covers this file
-      const hasTestFile = testFilePaths.has(uri.fsPath.replace(/\.[tj]sx?$/, '.test.ts')) ||
-        testFilePaths.has(uri.fsPath.replace(/\.[tj]sx?$/, '.spec.ts'))
-      fns.forEach(f => { f.hasTests = hasTestFile })
-      functions.push(...fns)
-      routes.push(...parseRoutes(content, relPath))
-    }
+      if (/\.[tj]sx?$/.test(uri.fsPath)) {
+        const fns = parseFunctions(content, relPath)
+        const hasTestFile =
+          testFilePaths.has(uri.fsPath.replace(/\.[tj]sx?$/, '.test.ts')) ||
+          testFilePaths.has(uri.fsPath.replace(/\.[tj]sx?$/, '.spec.ts'))
+        fns.forEach(f => { f.hasTests = hasTestFile })
+        functions.push(...fns)
+        routes.push(...parseRoutes(content, relPath))
+      }
 
-    // Parse models from Prisma/TS files
-    if (uri.fsPath.endsWith('.prisma') || /\.[tj]s$/.test(uri.fsPath)) {
-      models.push(...parseModels(content, relPath))
-    }
+      if (uri.fsPath.endsWith('.prisma') || /\.[tj]s$/.test(uri.fsPath)) {
+        models.push(...parseModels(content, relPath))
+      }
+    }))
 
-    scanned++
+    scanned = Math.min(i + BATCH_SIZE, files.length)
     const pct = 30 + Math.floor((scanned / files.length) * 40)
-    if (scanned % 10 === 0) {
-      onProgress(`Lendo arquivos... (${scanned} de ${files.length})`, pct)
-    }
+    onProgress(`Lendo arquivos... (${scanned} de ${files.length})`, pct)
   }
+
+  onProgress('Identificando domínios do negócio...', 72)
+  const flows = detectFlows(functions, routes, models)
 
   onProgress('Procurando onde um agente pode te ajudar...', 75)
   const gaps = detectGaps(functions, routes, root, projectConfig)
@@ -85,6 +92,7 @@ export async function scanWorkspace(
     models,
     scripts: projectConfig.scripts,
     gaps,
+    flows,
     stats: {
       totalFiles: files.length,
       totalFunctions: functions.length,

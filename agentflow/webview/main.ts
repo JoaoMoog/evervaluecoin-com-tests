@@ -1,6 +1,7 @@
 import { bridge } from './bridge'
 import { CanvasRenderer, CanvasNodeData, CanvasEdgeData } from './canvas/renderer'
 import { InspectorPanel } from './inspector/panel'
+import { BuilderWizard } from './builder/wizard'
 
 // ── Persisted UI state ───────────────────────────────────────────────────────
 
@@ -35,6 +36,7 @@ root.innerHTML = `
   <div id="topbar">
     <span class="logo">⚡ AgentFlow</span>
     <div class="topbar-actions">
+      <button id="btn-new-agent" class="btn btn-ghost" title="Criar agente manualmente">+ Agente</button>
       <button id="btn-scan" class="btn btn-primary">Varrer repositório</button>
       <button id="btn-run-all" class="btn btn-secondary">▷ Executar todos</button>
     </div>
@@ -42,6 +44,7 @@ root.innerHTML = `
   <div id="main-layout">
     <div id="canvas-container"></div>
     <div id="inspector-panel" style="display:none"></div>
+    <div id="builder-panel" style="display:none"></div>
   </div>
   <div id="log-panel">
     <div class="log-header">
@@ -110,10 +113,12 @@ root.innerHTML = `
 
 const canvasEl = document.getElementById('canvas-container')!
 const inspectorEl = document.getElementById('inspector-panel')!
+const builderEl = document.getElementById('builder-panel')!
 const logEl = document.getElementById('log-output')!
 
 const renderer = new CanvasRenderer(canvasEl)
 const inspector = new InspectorPanel(inspectorEl)
+const builder = new BuilderWizard(builderEl)
 
 renderer.setNodeClickHandler(node => {
   inspector.show(node)
@@ -384,6 +389,18 @@ bridge.on('PROMPT_SUGGESTED', (payload) => {
   showToast('Prompt sugerido!', 'O Copilot criou um prompt para este agente. Você pode editá-lo antes de ativar.', 'info')
 })
 
+bridge.on('BUILDER_STEP', (payload) => {
+  const p = payload as { flowDomain?: string; flowLabel?: string; flowFunctions?: string[] }
+  inspector.hide()
+  builder.open(p)
+})
+
+bridge.on('BUILDER_PROMPT_READY', (payload) => {
+  const p = payload as { prompt: string; name: string; emoji: string; description: string }
+  builder.fillPrompt(p)
+  showToast('Prompt gerado!', 'O Copilot criou um prompt personalizado para o seu agente.', 'info')
+})
+
 bridge.on('ERROR', (payload) => {
   const p = payload as { message: string }
   hideProgress()
@@ -392,6 +409,11 @@ bridge.on('ERROR', (payload) => {
 })
 
 // ── Button handlers ───────────────────────────────────────────────────────────
+
+document.getElementById('btn-new-agent')!.addEventListener('click', () => {
+  inspector.hide()
+  bridge.send('OPEN_BUILDER', {})
+})
 
 document.getElementById('btn-scan')!.addEventListener('click', () => {
   bridge.send('SCAN_REQUEST')
