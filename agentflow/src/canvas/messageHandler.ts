@@ -75,7 +75,6 @@ export class MessageHandler {
     private configStore: ConfigStore,
     private history: HistoryManager,
     private logger: Logger,
-    private workspaceRoot: string
   ) {}
 
   async handle(raw: unknown, panel: CanvasPanel): Promise<void> {

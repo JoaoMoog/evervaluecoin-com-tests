@@ -66,7 +66,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     configStore,
     history,
     logger,
-    root
   )
 
   // Register commands

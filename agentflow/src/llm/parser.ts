@@ -38,22 +38,6 @@ export function parseAgentSuggestions(raw: string): AgentSuggestion[] {
   }
 }
 
-/**
- * Parses a single JSON object response from the LLM.
- */
-export function parseJsonResponse<T>(raw: string): T | null {
-  const clean = stripMarkdownFences(raw)
-  try {
-    return JSON.parse(clean) as T
-  } catch {
-    const match = raw.match(/\{[\s\S]*\}/)
-    if (match) {
-      try { return JSON.parse(match[0]) as T } catch { return null }
-    }
-    return null
-  }
-}
-
 function stripMarkdownFences(raw: string): string {
   return raw
     .replace(/```json\n?/g, '')
