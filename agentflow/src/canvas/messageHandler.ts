@@ -1,7 +1,7 @@
 import * as vscode from 'vscode'
 import { CanvasPanel } from './panel'
 import { buildCanvasNodes } from './stateSync'
-import { WebviewToExtension, TutorialStep, BuilderState } from './types'
+import { WebviewToExtension, TutorialStep, BuilderState, HistoryRunSummary } from './types'
 import { scanWorkspace, buildContext } from '../scanner/index'
 import { CopilotBridge, PROMPTS, parseAgentSuggestions } from '../llm/index'
 import { AgentExecutor, TriggerManager, AgentDefinition } from '../runtime/index'
@@ -37,7 +37,35 @@ const TUTORIAL_STEPS: TutorialStep[] = [
   },
 ]
 
+/** Maps raw error strings to user-friendly Portuguese messages. */
+function friendlyError(err: unknown): string {
+  const raw = String(err)
+  if (/ENOENT|no such file/i.test(raw))
+    return 'Arquivo não encontrado. Verifique se o arquivo ainda existe no projeto.'
+  if (/EACCES|permission denied/i.test(raw))
+    return 'Sem permissão para acessar o arquivo. Verifique as permissões.'
+  if (/Copilot|lm\.|selectChatModels/i.test(raw))
+    return 'GitHub Copilot não está disponível. Verifique se está instalado e conectado.'
+  if (/rate.?limit|429/i.test(raw))
+    return 'Limite de requisições atingido. Aguarde alguns segundos e tente novamente.'
+  if (/network|ECONNREFUSED|fetch failed/i.test(raw))
+    return 'Erro de conexão. Verifique sua internet e tente novamente.'
+  if (/timeout/i.test(raw))
+    return 'O agente demorou muito para responder. Tente novamente.'
+  if (raw.length > 180) return raw.slice(0, 180) + '…'
+  return raw
+}
+
+const MAX_CONCURRENT_RUNS = 2
+
 export class MessageHandler {
+  /** Maps agentId → active CancellationTokenSource so runs can be stopped */
+  private activeRuns = new Map<string, vscode.CancellationTokenSource>()
+
+  /** Simple concurrency limiter */
+  private runningCount = 0
+  private runQueue: Array<() => void> = []
+
   constructor(
     private extensionContext: vscode.ExtensionContext,
     private bridge: CopilotBridge,
@@ -81,6 +109,14 @@ export class MessageHandler {
         await this.handleRunAgent(msg.payload.id, msg.payload.context, panel)
         break
 
+      case 'CANCEL_AGENT':
+        this.handleCancelAgent(msg.payload.id, panel)
+        break
+
+      case 'REQUEST_HISTORY':
+        this.handleRequestHistory(msg.payload?.limit, panel)
+        break
+
       case 'NODE_MOVED':
         await this.handleNodeMoved(msg.payload.id, msg.payload.x, msg.payload.y)
         break
@@ -115,9 +151,16 @@ export class MessageHandler {
     const agents = await this.agentStore.list()
     const hasAgents = agents.length > 0
 
+    // Build a map of agentId → ISO lastRunAt for the canvas to show idle hints
+    const agentHistory: Record<string, string> = {}
+    for (const agent of agents) {
+      const lastRun = this.history.getByAgent(agent.id, 1)[0]
+      if (lastRun) agentHistory[agent.id] = lastRun.startedAt.toISOString()
+    }
+
     panel.send({
       type: 'INITIAL_STATE',
-      payload: { agents, nodes: [], hasAgents },
+      payload: { agents, nodes: [], hasAgents, agentHistory },
     })
 
     // First-time user: start the tutorial
@@ -164,14 +207,7 @@ export class MessageHandler {
 
     } catch (err) {
       this.logger.error(`Varredura falhou: ${err}`)
-      const raw = String(err)
-      // Show a friendly message, not a raw stack trace
-      const friendly = raw.includes('Copilot')
-        ? 'GitHub Copilot não está disponível. Verifique se está instalado e conectado.'
-        : raw.length > 120
-        ? raw.slice(0, 120) + '...'
-        : raw
-      panel.send({ type: 'ERROR', payload: { message: friendly, detail: raw } })
+      panel.send({ type: 'ERROR', payload: { message: friendlyError(err), detail: String(err) } })
     }
   }
 
@@ -179,13 +215,7 @@ export class MessageHandler {
     await this.agentStore.save(agent)
     this.triggerManager.register(agent, (a, ctx) => {
       panel.send({ type: 'AGENT_STATUS', payload: { id: a.id, status: 'running' } })
-      this.executor.execute(a, ctx, text =>
-        panel.send({ type: 'RUN_CHUNK', payload: { agentId: a.id, text } })
-      ).then(run => {
-        this.history.addRun(run)
-        panel.send({ type: 'RUN_COMPLETE', payload: { run } })
-        panel.send({ type: 'AGENT_STATUS', payload: { id: a.id, status: run.status } })
-      })
+      this.executeWithQueue(a, ctx, panel)
     })
     panel.send({ type: 'AGENT_STATUS', payload: { id: agent.id, status: 'idle' } })
     this.logger.info(`Agente "${agent.name}" ativado`)
@@ -197,6 +227,7 @@ export class MessageHandler {
       agent.active = false
       await this.agentStore.save(agent)
     }
+    this.triggerManager.unregisterAgent(id)
     panel.send({ type: 'AGENT_STATUS', payload: { id, status: 'paused' } })
     this.logger.info(`Agente "${id}" desativado`)
   }
@@ -208,12 +239,82 @@ export class MessageHandler {
       return
     }
     panel.send({ type: 'AGENT_STATUS', payload: { id, status: 'running' } })
-    const run = await this.executor.execute(agent, context, text =>
-      panel.send({ type: 'RUN_CHUNK', payload: { agentId: id, text } })
-    )
-    this.history.addRun(run)
-    panel.send({ type: 'RUN_COMPLETE', payload: { run } })
-    panel.send({ type: 'AGENT_STATUS', payload: { id, status: run.status } })
+    this.executeWithQueue(agent, context, panel)
+  }
+
+  /**
+   * Executes an agent respecting the MAX_CONCURRENT_RUNS limit.
+   * If the limit is reached, queues the run until a slot is free.
+   */
+  private executeWithQueue(agent: AgentDefinition, context: string, panel: CanvasPanel): void {
+    const run = async (): Promise<void> => {
+      this.runningCount++
+      const cts = new vscode.CancellationTokenSource()
+      this.activeRuns.set(agent.id, cts)
+
+      try {
+        const agentRun = await this.executor.execute(
+          agent,
+          context,
+          text => panel.send({ type: 'RUN_CHUNK', payload: { agentId: agent.id, text } }),
+          cts.token
+        )
+        this.history.addRun(agentRun)
+        panel.send({ type: 'RUN_COMPLETE', payload: { run: agentRun } })
+        panel.send({ type: 'AGENT_STATUS', payload: { id: agent.id, status: agentRun.status, lastRunAt: agentRun.startedAt.toISOString() } })
+      } finally {
+        cts.dispose()
+        this.activeRuns.delete(agent.id)
+        this.runningCount--
+        // Dequeue next run if any are waiting
+        const next = this.runQueue.shift()
+        next?.()
+      }
+    }
+
+    if (this.runningCount < MAX_CONCURRENT_RUNS) {
+      run()
+    } else {
+      this.logger.info(`Agente "${agent.name}" na fila (${this.runQueue.length + 1} aguardando)`)
+      this.runQueue.push(() => run())
+    }
+  }
+
+  private handleCancelAgent(agentId: string, panel: CanvasPanel): void {
+    const cts = this.activeRuns.get(agentId)
+    if (cts) {
+      cts.cancel()
+      this.logger.info(`Agente "${agentId}" cancelado pelo usuário`)
+      panel.send({ type: 'AGENT_CANCELLED', payload: { id: agentId } })
+      panel.send({ type: 'AGENT_STATUS', payload: { id: agentId, status: 'idle' } })
+    }
+  }
+
+  private handleRequestHistory(limit: number | undefined, panel: CanvasPanel): void {
+    const runs = this.history.getRecent(limit ?? 30)
+    const agentCache = new Map<string, { name: string; emoji: string }>()
+
+    // Build history summaries synchronously from in-memory data
+    const summaries: HistoryRunSummary[] = runs.map(r => {
+      const cached = agentCache.get(r.agentId)
+      const durationMs = r.finishedAt
+        ? r.finishedAt.getTime() - r.startedAt.getTime()
+        : undefined
+
+      return {
+        agentId: r.agentId,
+        agentName: cached?.name ?? r.agentId,
+        agentEmoji: cached?.emoji ?? '🤖',
+        status: r.status,
+        startedAt: r.startedAt.toISOString(),
+        finishedAt: r.finishedAt?.toISOString(),
+        durationMs,
+        filesModified: r.filesModified,
+        error: r.error,
+      }
+    })
+
+    panel.send({ type: 'HISTORY_DATA', payload: { runs: summaries } })
   }
 
   private async handleNodeMoved(agentId: string, x: number, y: number): Promise<void> {
@@ -320,6 +421,8 @@ Retorne APENAS o prompt, sem explicações ou formatação extra.`,
       ? `Ele é acionado ao salvar arquivos que correspondem a "${payload.values.triggerPattern ?? '**/*'}".`
       : payload.values.trigger === 'on_startup'
       ? 'Ele executa automaticamente quando o projeto é aberto.'
+      : payload.values.trigger === 'scheduled'
+      ? `Ele executa automaticamente no horário ${payload.values.triggerPattern ?? ''} todos os dias.`
       : 'Ele executa quando o usuário pedir manualmente.'
 
     const raw = await this.bridge.send([{
@@ -392,7 +495,9 @@ Responda EXATAMENTE no formato JSON (sem markdown):
       skills:      state.skills ?? ['read-file'],
       trigger: {
         type:    (state.trigger as AgentDefinition['trigger']['type']) ?? 'manual',
-        pattern: state.trigger === 'file_save' ? (state.triggerPattern ?? '') : undefined,
+        pattern: (state.trigger === 'file_save' || state.trigger === 'scheduled')
+          ? (state.triggerPattern ?? '')
+          : undefined,
       },
       config: {},
     }

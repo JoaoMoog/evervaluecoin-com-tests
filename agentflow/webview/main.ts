@@ -88,11 +88,15 @@ root.innerHTML = `
   <div id="log-panel">
     <div class="log-tabs-bar" id="log-tabs">
       <div class="log-tab log-tab--active" data-pane="system" id="tab-system">Atividade</div>
+      <div class="log-tab" data-pane="history" id="tab-history">📋 Histórico</div>
       <div class="log-tab-actions">
         <button id="btn-clear-log" class="btn-icon" title="Limpar">✕</button>
       </div>
     </div>
     <div class="log-pane log-pane--active" id="pane-system"></div>
+    <div class="log-pane" id="pane-history">
+      <div class="history-empty">Nenhuma execução ainda. Ative um agente e clique em "▷ Testar agora".</div>
+    </div>
   </div>
 
   <!-- Tutorial overlay -->
@@ -214,7 +218,7 @@ const builder = new BuilderWizard(builderEl)
 const logTabsEl = document.getElementById('log-tabs')!
 const paneSystem = document.getElementById('pane-system')!
 // Map from agentId to pane element
-const logPanes = new Map<string, { tab: HTMLElement; pane: HTMLElement; statusBadge: HTMLElement }>()
+const logPanes = new Map<string, { tab: HTMLElement; pane: HTMLElement; statusBadge: HTMLElement; stopBtn: HTMLElement }>()
 
 renderer.setNodeClickHandler(node => {
   inspector.show(node)
@@ -372,9 +376,19 @@ function appendLogChunk(agentId: string, text: string): void {
     const badge = document.createElement('span')
     badge.className = 'log-status-badge log-status-badge--running'
     badge.textContent = 'executando'
+    const stopBtn = document.createElement('button')
+    stopBtn.className = 'btn-stop'
+    stopBtn.title = 'Parar execução'
+    stopBtn.textContent = '⏹ Parar'
+    stopBtn.addEventListener('click', () => {
+      bridge.send('CANCEL_AGENT', { id: agentId })
+      stopBtn.disabled = true
+      stopBtn.textContent = 'Cancelando…'
+    })
     header.appendChild(agentLabel)
     header.appendChild(timeLabel)
     header.appendChild(badge)
+    header.appendChild(stopBtn)
     pane.appendChild(header)
 
     // Insert tab before the actions div
@@ -382,7 +396,7 @@ function appendLogChunk(agentId: string, text: string): void {
     logTabsEl.insertBefore(tab, actionsDiv)
     document.getElementById('log-panel')!.appendChild(pane)
 
-    entry = { tab, pane, statusBadge: badge }
+    entry = { tab, pane, statusBadge: badge, stopBtn }
     logPanes.set(agentId, entry)
     switchLogTab(agentId)
   }
@@ -406,6 +420,10 @@ function switchLogTab(paneId: string): void {
 }
 
 document.getElementById('tab-system')!.addEventListener('click', () => switchLogTab('system'))
+document.getElementById('tab-history')!.addEventListener('click', () => {
+  switchLogTab('history')
+  bridge.send('REQUEST_HISTORY', { limit: 30 })
+})
 
 // ── Empty state ───────────────────────────────────────────────────────────────
 
@@ -559,15 +577,66 @@ bridge.on('RUN_COMPLETE', (payload) => {
   if (entry) {
     entry.statusBadge.className = `log-status-badge log-status-badge--${run.status}`
     entry.statusBadge.textContent = run.status === 'success' ? 'concluído' : 'erro'
+    entry.stopBtn.style.display = 'none'
   }
 })
 
 bridge.on('INITIAL_STATE', (payload) => {
-  const p = payload as { agents: unknown[]; hasAgents: boolean }
+  const p = payload as { agents: Array<{ id: string; active: boolean }>; hasAgents: boolean; agentHistory?: Record<string, string> }
   updateEmptyState(p.hasAgents)
-  if (!p.hasAgents && !state.hasCompletedTutorial) {
-    // Tutorial will be shown via TUTORIAL_STEP from the extension
+  // Show "Nunca testado" hint on canvas for active agents that have never run
+  if (p.agentHistory) {
+    p.agents.forEach(agent => {
+      if (agent.active && !p.agentHistory![agent.id]) {
+        renderer.updateNodeStatus(agent.id, 'idle')
+      }
+    })
   }
+})
+
+bridge.on('HISTORY_DATA', (payload) => {
+  const p = payload as { runs: Array<{ agentId: string; agentName: string; agentEmoji: string; status: string; startedAt: string; finishedAt?: string; durationMs?: number; filesModified: string[]; error?: string }> }
+  const pane = document.getElementById('pane-history')!
+  pane.innerHTML = ''
+
+  if (p.runs.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'history-empty'
+    empty.textContent = 'Nenhuma execução registrada ainda.'
+    pane.appendChild(empty)
+    return
+  }
+
+  p.runs.forEach(run => {
+    const row = document.createElement('div')
+    row.className = `history-row history-row--${run.status}`
+
+    const statusIcon = run.status === 'success' ? '✓' : run.status === 'running' ? '⏳' : '✗'
+    const duration = run.durationMs !== undefined ? `${(run.durationMs / 1000).toFixed(1)}s` : ''
+    const time = new Date(run.startedAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    const filesText = run.filesModified.length ? ` · ${run.filesModified.length} arquivo(s)` : ''
+
+    row.innerHTML = `
+      <span class="history-status">${statusIcon}</span>
+      <div class="history-info">
+        <div class="history-name">${run.agentEmoji} ${run.agentName || run.agentId}</div>
+        <div class="history-meta">${time}${duration ? ' · ' + duration : ''}${filesText}</div>
+        ${run.error && run.error !== 'Cancelado pelo usuário' ? `<div class="history-error">${run.error.slice(0, 100)}</div>` : ''}
+      </div>
+    `
+    pane.appendChild(row)
+  })
+})
+
+bridge.on('AGENT_CANCELLED', (payload) => {
+  const p = payload as { id: string }
+  const entry = logPanes.get(p.id)
+  if (entry) {
+    entry.statusBadge.className = 'log-status-badge'
+    entry.statusBadge.textContent = 'cancelado'
+    entry.stopBtn.style.display = 'none'
+  }
+  appendLog(`⏹ Agente ${p.id} cancelado pelo usuário`, 'log-info')
 })
 
 bridge.on('PROMPT_SUGGESTED', (payload) => {

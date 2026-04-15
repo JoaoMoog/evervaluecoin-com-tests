@@ -73,20 +73,34 @@ export interface TutorialStep {
   spotlightNodeType?: NodeType  // if set, spotlight first node of this type
 }
 
+export interface HistoryRunSummary {
+  agentId: string
+  agentName: string
+  agentEmoji: string
+  status: string
+  startedAt: string       // ISO string
+  finishedAt?: string     // ISO string
+  durationMs?: number
+  filesModified: string[]
+  error?: string
+}
+
 // Messages from Extension → Webview
 export type ExtensionToWebview =
   | { type: 'SCAN_PROGRESS';        payload: { step: string; pct: number; stage?: 'scan' | 'copilot' | 'canvas' } }
   | { type: 'SCAN_COMPLETE';        payload: { nodes: CanvasNode[]; edges: CanvasEdge[] } }
   | { type: 'AGENT_SUGGESTED';      payload: { agents: import('../llm/parser').AgentSuggestion[] } }
-  | { type: 'AGENT_STATUS';         payload: { id: string; status: AgentStatus } }
+  | { type: 'AGENT_STATUS';         payload: { id: string; status: AgentStatus; lastRunAt?: string } }
   | { type: 'RUN_CHUNK';            payload: { agentId: string; text: string } }
   | { type: 'RUN_COMPLETE';         payload: { run: import('../runtime/types').AgentRun } }
-  | { type: 'INITIAL_STATE';        payload: { agents: import('../runtime/types').AgentDefinition[]; nodes: CanvasNode[]; hasAgents: boolean } }
+  | { type: 'INITIAL_STATE';        payload: { agents: import('../runtime/types').AgentDefinition[]; nodes: CanvasNode[]; hasAgents: boolean; agentHistory?: Record<string, string> } }
   | { type: 'ERROR';                payload: { message: string; detail?: string } }
   | { type: 'TUTORIAL_STEP';        payload: TutorialStep }
   | { type: 'PROMPT_SUGGESTED';     payload: { agentId: string; prompt: string } }
   | { type: 'BUILDER_STEP';         payload: BuilderStep }
   | { type: 'BUILDER_PROMPT_READY'; payload: { prompt: string; name: string; emoji: string; description: string } }
+  | { type: 'HISTORY_DATA';         payload: { runs: HistoryRunSummary[] } }
+  | { type: 'AGENT_CANCELLED';      payload: { id: string } }
 
 // Messages from Webview → Extension
 export type WebviewToExtension =
@@ -105,3 +119,5 @@ export type WebviewToExtension =
   | { type: 'BUILDER_NEXT';          payload: { step: number; values: Record<string, unknown> } }
   | { type: 'BUILDER_BACK';          payload: { step: number } }
   | { type: 'CREATE_AGENT_FROM_BUILDER'; payload: { state: BuilderState } }
+  | { type: 'CANCEL_AGENT';          payload: { id: string } }
+  | { type: 'REQUEST_HISTORY';       payload: { limit?: number } }

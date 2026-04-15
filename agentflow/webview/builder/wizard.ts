@@ -26,6 +26,10 @@ const TRIGGER_OPTIONS = [
     label: '🚀 Ao abrir o projeto',
     detail: 'Roda uma vez quando você abre o VS Code',
     example: 'Ex: mostra um resumo do que mudou desde ontem' },
+  { value: 'scheduled',
+    label: '⏰ Em horário fixo',
+    detail: 'Executa automaticamente no horário que você definir',
+    example: 'Ex: toda manhã às 9h, gera um resumo do que mudou no código' },
 ]
 
 const ALL_SKILLS = [
@@ -50,6 +54,7 @@ interface WizardState {
   flowFunctions?: string[]
   trigger: string
   triggerPattern: string
+  scheduledTime: string
   customContext: string
   goalType: string
   customGoal: string
@@ -70,6 +75,7 @@ export class BuilderWizard {
   private state: WizardState = {
     trigger: 'manual',
     triggerPattern: '',
+    scheduledTime: '09:00',
     customContext: '',
     goalType: 'test',
     customGoal: '',
@@ -209,6 +215,7 @@ export class BuilderWizard {
         (val) => {
           this.state.trigger = val
           patternWrap.style.display = val === 'file_save' ? 'block' : 'none'
+          scheduleWrap.style.display = val === 'scheduled' ? 'block' : 'none'
         }
       )
       // Concrete example below the detail
@@ -219,6 +226,7 @@ export class BuilderWizard {
       el.appendChild(card)
     })
 
+    // File-save pattern picker
     const patternWrap = document.createElement('div')
     patternWrap.className = 'builder-pattern-wrap'
     patternWrap.style.display = this.state.trigger === 'file_save' ? 'block' : 'none'
@@ -242,6 +250,30 @@ export class BuilderWizard {
     patternWrap.appendChild(patternInput)
     patternWrap.appendChild(hint)
     el.appendChild(patternWrap)
+
+    // Scheduled time picker
+    const scheduleWrap = document.createElement('div')
+    scheduleWrap.className = 'builder-pattern-wrap'
+    scheduleWrap.style.display = this.state.trigger === 'scheduled' ? 'block' : 'none'
+
+    const scheduleLabel = document.createElement('label')
+    scheduleLabel.className = 'builder-field-label'
+    scheduleLabel.textContent = 'Horário de execução'
+
+    const scheduleInput = document.createElement('input')
+    scheduleInput.type = 'time'
+    scheduleInput.className = 'inspector-input'
+    scheduleInput.value = this.state.scheduledTime
+    scheduleInput.addEventListener('input', () => { this.state.scheduledTime = scheduleInput.value })
+
+    const scheduleHint = document.createElement('div')
+    scheduleHint.className = 'builder-hint'
+    scheduleHint.textContent = 'O agente vai rodar automaticamente neste horário todos os dias.'
+
+    scheduleWrap.appendChild(scheduleLabel)
+    scheduleWrap.appendChild(scheduleInput)
+    scheduleWrap.appendChild(scheduleHint)
+    el.appendChild(scheduleWrap)
   }
 
   // ── Step 2: Context ─────────────────────────────────────────────────────────
@@ -615,12 +647,17 @@ export class BuilderWizard {
   }
 
   private collectState(): Record<string, unknown> {
+    // For scheduled triggers, use scheduledTime as the pattern (HH:MM)
+    const effectivePattern = this.state.trigger === 'scheduled'
+      ? this.state.scheduledTime
+      : this.state.triggerPattern
+
     return {
       flowDomain:    this.state.flowDomain,
       flowLabel:     this.state.flowLabel,
       flowFunctions: this.state.flowFunctions,
       trigger:       this.state.trigger,
-      triggerPattern: this.state.triggerPattern,
+      triggerPattern: effectivePattern,
       customContext: this.state.customContext,
       goalType:      this.state.goalType,
       customGoal:    this.state.customGoal,

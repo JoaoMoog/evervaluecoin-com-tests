@@ -33,6 +33,7 @@ const TRIGGER_OPTIONS = [
   { value: 'manual',     label: 'Somente quando eu pedir' },
   { value: 'file_save',  label: 'Automaticamente ao salvar um arquivo' },
   { value: 'on_startup', label: 'Toda vez que eu abrir o projeto' },
+  { value: 'scheduled',  label: 'Em horário fixo todos os dias' },
 ]
 
 const GLOB_EXAMPLES = `Exemplos de padrões:
@@ -293,6 +294,9 @@ export class InspectorPanel {
       select.appendChild(op)
     })
 
+    const existingPattern = (data.trigger as { pattern?: string })?.pattern ?? String(data.triggerDetail ?? '')
+
+    // File-save pattern input
     const patternWrap = document.createElement('div')
     patternWrap.className = 'inspector-pattern-wrap'
     patternWrap.style.display = triggerType === 'file_save' ? 'block' : 'none'
@@ -306,8 +310,7 @@ export class InspectorPanel {
     patternInput.className = 'inspector-input'
     patternInput.id = 'agent-trigger-pattern'
     patternInput.placeholder = 'Ex: src/**/*.ts (todos os TypeScript em src/)'
-    const existingPattern = (data.trigger as { pattern?: string })?.pattern ?? String(data.triggerDetail ?? '')
-    patternInput.value = existingPattern
+    patternInput.value = triggerType === 'file_save' ? existingPattern : ''
 
     const patternHint = document.createElement('div')
     patternHint.className = 'inspector-hint'
@@ -318,13 +321,38 @@ export class InspectorPanel {
     patternWrap.appendChild(patternInput)
     patternWrap.appendChild(patternHint)
 
+    // Scheduled time input
+    const scheduleWrap = document.createElement('div')
+    scheduleWrap.className = 'inspector-pattern-wrap'
+    scheduleWrap.style.display = triggerType === 'scheduled' ? 'block' : 'none'
+
+    const scheduleLabel = document.createElement('div')
+    scheduleLabel.className = 'inspector-sublabel'
+    scheduleLabel.textContent = 'Horário de execução (HH:MM)'
+
+    const scheduleInput = document.createElement('input')
+    scheduleInput.type = 'time'
+    scheduleInput.className = 'inspector-input'
+    scheduleInput.id = 'agent-trigger-pattern'   // reuse same id so buildAgentDefinition picks it up
+    scheduleInput.value = triggerType === 'scheduled' ? existingPattern : '09:00'
+
+    const scheduleHint = document.createElement('div')
+    scheduleHint.className = 'inspector-hint'
+    scheduleHint.textContent = 'O agente vai rodar automaticamente neste horário, todos os dias.'
+
+    scheduleWrap.appendChild(scheduleLabel)
+    scheduleWrap.appendChild(scheduleInput)
+    scheduleWrap.appendChild(scheduleHint)
+
     select.addEventListener('change', () => {
       patternWrap.style.display = select.value === 'file_save' ? 'block' : 'none'
+      scheduleWrap.style.display = select.value === 'scheduled' ? 'block' : 'none'
     })
 
     section.appendChild(lbl)
     section.appendChild(select)
     section.appendChild(patternWrap)
+    section.appendChild(scheduleWrap)
     this.container.appendChild(section)
   }
 

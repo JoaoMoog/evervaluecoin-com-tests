@@ -1,3 +1,4 @@
+import * as vscode from 'vscode'
 import { CopilotBridge, LLMMessage } from '../llm/bridge'
 import { SkillRegistry } from '../skills/index'
 import { SkillContext } from '../skills/types'
@@ -15,7 +16,8 @@ export class AgentExecutor {
   async execute(
     agent: AgentDefinition,
     taskContext: string,
-    onChunk?: (text: string) => void
+    onChunk?: (text: string) => void,
+    cancelToken?: vscode.CancellationToken
   ): Promise<AgentRun> {
     const run: AgentRun = {
       agentId: agent.id,
@@ -30,7 +32,15 @@ export class AgentExecutor {
 
     try {
       // 1. Gather skill context (pre-LLM)
-      const skillContext = await this.gatherSkillContext(agent.skills, taskContext, agent.id)
+      const skillContext = await this.gatherSkillContext(agent.skills, taskContext, agent.id, cancelToken)
+
+      if (cancelToken?.isCancellationRequested) {
+        run.status = 'error'
+        run.error = 'Cancelado pelo usuário'
+        run.finishedAt = new Date()
+        this.logger.warn(`⏹ ${agent.name} cancelado`)
+        return run
+      }
 
       // 2. Build messages
       const userContent = [
@@ -45,13 +55,22 @@ export class AgentExecutor {
 
       // 3. Stream from Copilot
       let fullOutput = ''
-      for await (const chunk of this.bridge.sendStream(messages)) {
+      for await (const chunk of this.bridge.sendStream(messages, cancelToken)) {
+        if (cancelToken?.isCancellationRequested) break
         if (!chunk.done) {
           fullOutput += chunk.text
           onChunk?.(chunk.text)
         } else {
           fullOutput = chunk.text
         }
+      }
+
+      if (cancelToken?.isCancellationRequested) {
+        run.status = 'error'
+        run.error = 'Cancelado pelo usuário'
+        run.finishedAt = new Date()
+        this.logger.warn(`⏹ ${agent.name} cancelado`)
+        return run
       }
 
       // 4. Apply output skills (post-LLM)
@@ -77,7 +96,8 @@ export class AgentExecutor {
   private async gatherSkillContext(
     skillNames: string[],
     taskContext: string,
-    agentId: string
+    agentId: string,
+    cancelToken?: vscode.CancellationToken
   ): Promise<string> {
     const ctx: SkillContext = {
       taskContext,
@@ -87,6 +107,7 @@ export class AgentExecutor {
 
     const parts: string[] = []
     for (const name of skillNames) {
+      if (cancelToken?.isCancellationRequested) break
       const skill = this.skills.get(name)
       if (!skill?.gatherContext) continue
       try {

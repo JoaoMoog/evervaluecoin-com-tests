@@ -397,3 +397,27 @@ html, body { height: 100%; overflow: hidden; background: var(--color-bg); color:
 /* ── Agent status badge (SVG text) ───────────────────────── */
 
 .agent-status-text { font-size: 9px; font-family: var(--font, sans-serif); }
+
+/* ── Stop button in log pane ─────────────────────────────── */
+
+.btn-stop { background: rgba(239,68,68,0.15); border: 1px solid var(--color-danger); color: var(--color-danger); font-size: 10px; padding: 2px 8px; border-radius: 4px; cursor: pointer; margin-left: auto; flex-shrink: 0; }
+.btn-stop:hover:not(:disabled) { background: rgba(239,68,68,0.3); }
+.btn-stop:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── History pane ────────────────────────────────────────── */
+
+.history-empty { padding: 24px 16px; color: var(--color-muted); font-size: 12px; text-align: center; }
+.history-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--color-border); }
+.history-row:last-child { border-bottom: none; }
+.history-row--success .history-status { color: var(--color-accent); }
+.history-row--error   .history-status { color: var(--color-danger); }
+.history-row--running .history-status { color: var(--color-amber); }
+.history-status { font-size: 13px; padding-top: 1px; flex-shrink: 0; }
+.history-info { flex: 1; min-width: 0; }
+.history-name { font-size: 12px; font-weight: 600; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.history-meta { font-size: 10px; color: var(--color-muted); margin-top: 2px; }
+.history-error { font-size: 10px; color: var(--color-danger); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Time input ──────────────────────────────────────────── */
+
+input[type="time"].inspector-input { color-scheme: dark; }

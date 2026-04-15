@@ -96,10 +96,17 @@ export async function scanWorkspace(
     stats: {
       totalFiles: files.length,
       totalFunctions: functions.length,
-      testCoverage: null,
+      testCoverage: calcTestCoverage(functions),
       filesScanned: scanned,
     },
   }
+}
+
+function calcTestCoverage(functions: FunctionInfo[]): number | null {
+  const exported = functions.filter(f => f.isExported)
+  if (exported.length === 0) return null
+  const withTests = exported.filter(f => f.hasTests).length
+  return Math.round((withTests / exported.length) * 1000) / 10  // one decimal, e.g. 66.7
 }
 
 function detectGaps(
