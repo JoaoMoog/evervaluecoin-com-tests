@@ -37,21 +37,62 @@ root.innerHTML = `
     <span class="logo">⚡ AgentFlow</span>
     <div class="topbar-actions">
       <button id="btn-new-agent" class="btn btn-ghost" title="Criar agente manualmente">+ Agente</button>
-      <button id="btn-scan" class="btn btn-primary">Varrer repositório</button>
+      <button id="btn-scan" class="btn btn-primary">🔍 Analisar projeto</button>
+      <button id="btn-help" class="btn btn-ghost" title="O que é um agente?">?</button>
       <button id="btn-run-all" class="btn btn-secondary">▷ Executar todos</button>
     </div>
   </div>
   <div id="main-layout">
-    <div id="canvas-container"></div>
+    <div id="canvas-container">
+      <!-- Canvas legend -->
+      <div id="canvas-legend">
+        <div class="legend-title">Legenda</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div>Agente</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>Função</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>Área do projeto</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#06b6d4"></div>Rota API</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#a855f7"></div>Ferramenta</div>
+      </div>
+      <!-- Canvas controls -->
+      <div id="canvas-controls">
+        <button class="canvas-ctrl-btn" id="btn-zoom-in" title="Aproximar">+</button>
+        <button class="canvas-ctrl-btn" id="btn-zoom-out" title="Afastar">−</button>
+        <button class="canvas-ctrl-btn" id="btn-zoom-fit" title="Encaixar tudo">⊡</button>
+      </div>
+      <!-- Canvas empty state -->
+      <div id="canvas-empty">
+        <div class="canvas-empty-card">
+          <div class="canvas-empty-icon">⚡</div>
+          <div class="canvas-empty-title">Bem-vindo ao AgentFlow</div>
+          <div class="canvas-empty-desc">Analise seu projeto para detectar padrões de código e receber sugestões de agentes de IA personalizados para o seu repositório.</div>
+          <div class="canvas-empty-steps">
+            <div class="canvas-empty-step">
+              <div class="canvas-empty-step-num">1</div>
+              <div class="canvas-empty-step-text">Analise seu projeto<span>Clique em "Analisar projeto" para começar</span></div>
+            </div>
+            <div class="canvas-empty-step">
+              <div class="canvas-empty-step-num">2</div>
+              <div class="canvas-empty-step-text">Escolha um agente<span>O Copilot vai sugerir agentes para seu código</span></div>
+            </div>
+            <div class="canvas-empty-step">
+              <div class="canvas-empty-step-num">3</div>
+              <div class="canvas-empty-step-text">Ative e veja acontecer<span>O agente trabalha automaticamente enquanto você coda</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
     <div id="inspector-panel" style="display:none"></div>
     <div id="builder-panel" style="display:none"></div>
   </div>
   <div id="log-panel">
-    <div class="log-header">
-      <span>Atividade</span>
-      <button id="btn-clear-log" class="btn-icon" title="Limpar log">✕</button>
+    <div class="log-tabs-bar" id="log-tabs">
+      <div class="log-tab log-tab--active" data-pane="system" id="tab-system">Atividade</div>
+      <div class="log-tab-actions">
+        <button id="btn-clear-log" class="btn-icon" title="Limpar">✕</button>
+      </div>
     </div>
-    <div id="log-output"></div>
+    <div class="log-pane log-pane--active" id="pane-system"></div>
   </div>
 
   <!-- Tutorial overlay -->
@@ -107,6 +148,57 @@ root.innerHTML = `
       </div>
     </div>
   </div>
+
+  <!-- Delete confirmation modal -->
+  <div id="modal-delete" style="display:none">
+    <div class="modal-card">
+      <div class="modal-icon">🗑</div>
+      <div class="modal-title" id="modal-delete-title">Remover agente?</div>
+      <div class="modal-body" id="modal-delete-body">Este agente será removido e não poderá mais executar automaticamente.</div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="btn-modal-cancel">Cancelar</button>
+        <button class="btn btn-danger" id="btn-modal-confirm">Remover</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Help panel -->
+  <div id="help-panel">
+    <div class="help-header">
+      <span class="help-header-title">? O que é um Agente?</span>
+      <button class="inspector-close" id="btn-help-close">✕</button>
+    </div>
+    <div class="help-content">
+      <div class="help-card">
+        <div class="help-card-icon">🤖</div>
+        <div class="help-card-title">O que é um agente de IA?</div>
+        <div class="help-card-body">Um agente é um assistente de IA programado para uma tarefa específica no seu projeto. Ele lê seu código, pensa sobre ele e pode gerar testes, documentação, revisões ou melhorias — automaticamente.</div>
+      </div>
+      <div class="help-card">
+        <div class="help-card-icon">⚡</div>
+        <div class="help-card-title">Quando ele executa?</div>
+        <div class="help-card-body">Você escolhe: manualmente quando quiser, toda vez que salvar um arquivo, ou quando abrir o projeto. O agente só faz o que você autorizou.</div>
+      </div>
+      <div class="help-card">
+        <div class="help-card-icon">🛠</div>
+        <div class="help-card-title">O que o agente pode fazer?</div>
+        <div class="help-card-body">Apenas o que você permitir. Você escolhe se ele pode ler arquivos, criar arquivos novos, rodar comandos de teste, buscar no código ou enviar notificações.</div>
+        <div class="help-card-example">📂 Ler arquivo → lê o código para ter contexto
+✍️ Escrever → cria ou edita arquivos com sugestões
+▷ Comandos → roda "npm test" depois de gerar código
+🔔 Notificar → avisa quando terminar</div>
+      </div>
+      <div class="help-card">
+        <div class="help-card-icon">💡</div>
+        <div class="help-card-title">Exemplos práticos</div>
+        <div class="help-card-body">O que outros times usam agentes para fazer:</div>
+        <div class="help-card-example">• Gerar testes para funções novas ao salvar
+• Documentar rotas da API toda semana
+• Revisar segurança antes de cada commit
+• Criar JSDoc para funções sem documentação</div>
+      </div>
+    </div>
+  </div>
 `
 
 // ── Module Instances ──────────────────────────────────────────────────────────
@@ -114,11 +206,15 @@ root.innerHTML = `
 const canvasEl = document.getElementById('canvas-container')!
 const inspectorEl = document.getElementById('inspector-panel')!
 const builderEl = document.getElementById('builder-panel')!
-const logEl = document.getElementById('log-output')!
 
 const renderer = new CanvasRenderer(canvasEl)
 const inspector = new InspectorPanel(inspectorEl)
 const builder = new BuilderWizard(builderEl)
+
+const logTabsEl = document.getElementById('log-tabs')!
+const paneSystem = document.getElementById('pane-system')!
+// Map from agentId to pane element
+const logPanes = new Map<string, { tab: HTMLElement; pane: HTMLElement; statusBadge: HTMLElement }>()
 
 renderer.setNodeClickHandler(node => {
   inspector.show(node)
@@ -246,34 +342,117 @@ function appendLog(text: string, cls = ''): void {
   const line = document.createElement('div')
   line.className = `log-line ${cls}`.trim()
   line.textContent = text
-  logEl.appendChild(line)
-  logEl.scrollTop = logEl.scrollHeight
+  paneSystem.appendChild(line)
+  paneSystem.scrollTop = paneSystem.scrollHeight
 }
 
-// Fixed: keep label span separate from streamed content
 function appendLogChunk(agentId: string, text: string): void {
-  let stream = document.querySelector<HTMLElement>(`[data-stream="${agentId}"]`)
-  if (!stream) {
-    stream = document.createElement('div')
-    stream.className = 'log-stream'
-    stream.dataset.stream = agentId
+  let entry = logPanes.get(agentId)
+  if (!entry) {
+    // Create tab
+    const tab = document.createElement('div')
+    tab.className = 'log-tab'
+    tab.dataset.pane = agentId
+    tab.innerHTML = `<span>${agentId.replace('agent-', '').split('-').slice(0, 2).join(' ')}</span>`
+    tab.addEventListener('click', () => switchLogTab(agentId))
 
-    const label = document.createElement('span')
-    label.className = 'log-agent-id'
-    label.textContent = `[${agentId}] `
+    // Create pane
+    const pane = document.createElement('div')
+    pane.className = 'log-pane'
+    pane.id = `pane-${agentId}`
 
-    const content = document.createElement('span')
-    content.className = 'log-stream-content'
+    const header = document.createElement('div')
+    header.className = 'log-pane-header'
+    const agentLabel = document.createElement('span')
+    agentLabel.className = 'log-pane-agent'
+    agentLabel.textContent = agentId.replace('agent-', '')
+    const timeLabel = document.createElement('span')
+    timeLabel.className = 'log-pane-time'
+    timeLabel.textContent = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    const badge = document.createElement('span')
+    badge.className = 'log-status-badge log-status-badge--running'
+    badge.textContent = 'executando'
+    header.appendChild(agentLabel)
+    header.appendChild(timeLabel)
+    header.appendChild(badge)
+    pane.appendChild(header)
 
-    stream.appendChild(label)
-    stream.appendChild(content)
-    logEl.appendChild(stream)
+    // Insert tab before the actions div
+    const actionsDiv = logTabsEl.querySelector('.log-tab-actions')!
+    logTabsEl.insertBefore(tab, actionsDiv)
+    document.getElementById('log-panel')!.appendChild(pane)
+
+    entry = { tab, pane, statusBadge: badge }
+    logPanes.set(agentId, entry)
+    switchLogTab(agentId)
   }
 
-  const content = stream.querySelector<HTMLSpanElement>('.log-stream-content')!
-  content.textContent += text
-  logEl.scrollTop = logEl.scrollHeight
+  const content = document.createElement('span')
+  content.className = 'log-stream-content'
+  content.textContent = text
+  entry.pane.appendChild(content)
+  entry.pane.scrollTop = entry.pane.scrollHeight
 }
+
+function switchLogTab(paneId: string): void {
+  // Deactivate all
+  document.querySelectorAll('.log-tab').forEach(t => t.classList.remove('log-tab--active'))
+  document.querySelectorAll('.log-pane').forEach(p => p.classList.remove('log-pane--active'))
+  // Activate target
+  const tab = logTabsEl.querySelector(`[data-pane="${paneId}"]`) as HTMLElement | null
+  tab?.classList.add('log-tab--active')
+  const pane = document.getElementById(`pane-${paneId}`) ?? paneSystem
+  pane.classList.add('log-pane--active')
+}
+
+document.getElementById('tab-system')!.addEventListener('click', () => switchLogTab('system'))
+
+// ── Empty state ───────────────────────────────────────────────────────────────
+
+function updateEmptyState(hasNodes: boolean): void {
+  const el = document.getElementById('canvas-empty')!
+  el.style.display = hasNodes ? 'none' : 'flex'
+}
+
+// ── Delete modal ──────────────────────────────────────────────────────────────
+
+let pendingDeleteId = ''
+let pendingDeleteResolve: ((confirmed: boolean) => void) | null = null
+
+function showDeleteModal(agentId: string, agentName: string): Promise<boolean> {
+  pendingDeleteId = agentId
+  const modal = document.getElementById('modal-delete')!
+  ;(document.getElementById('modal-delete-title') as HTMLElement).textContent = `Remover "${agentName}"?`
+  ;(document.getElementById('modal-delete-body') as HTMLElement).innerHTML =
+    `O agente <strong>${agentName}</strong> será removido permanentemente e não executará mais automaticamente.`
+  modal.style.display = 'flex'
+  return new Promise(resolve => { pendingDeleteResolve = resolve })
+}
+
+;(window as Window & { showDeleteModal?: typeof showDeleteModal }).showDeleteModal = showDeleteModal
+
+document.getElementById('btn-modal-cancel')!.addEventListener('click', () => {
+  document.getElementById('modal-delete')!.style.display = 'none'
+  pendingDeleteResolve?.(false)
+  pendingDeleteResolve = null
+})
+document.getElementById('btn-modal-confirm')!.addEventListener('click', () => {
+  document.getElementById('modal-delete')!.style.display = 'none'
+  bridge.send('DELETE_AGENT', { id: pendingDeleteId })
+  pendingDeleteResolve?.(true)
+  pendingDeleteResolve = null
+  showToast('Agente removido', 'O agente foi removido com sucesso.', 'info')
+})
+
+// ── Help panel ────────────────────────────────────────────────────────────────
+
+document.getElementById('btn-help')!.addEventListener('click', () => {
+  const panel = document.getElementById('help-panel')!
+  panel.classList.toggle('help-panel--open')
+})
+document.getElementById('btn-help-close')!.addEventListener('click', () => {
+  document.getElementById('help-panel')!.classList.remove('help-panel--open')
+})
 
 // ── Result spotlight ──────────────────────────────────────────────────────────
 
@@ -317,7 +496,7 @@ document.getElementById('btn-result-close')!.addEventListener('click', () => {
 document.getElementById('btn-result-log')!.addEventListener('click', () => {
   const overlay = document.getElementById('overlay-result')!
   overlay.style.display = 'none'
-  logEl.scrollTop = logEl.scrollHeight
+  paneSystem.scrollTop = paneSystem.scrollHeight
 })
 
 // ── Extension message handlers ────────────────────────────────────────────────
@@ -339,6 +518,7 @@ bridge.on('SCAN_COMPLETE', (payload) => {
   saveState({ hasScannedOnce: true })
   hideProgress()
   renderer.setNodes(p.nodes, p.edges)
+  updateEmptyState(p.nodes.length > 0)
   appendLog(`✓ Canvas atualizado — ${p.nodes.filter(n => n.type === 'agent').length} agentes encontrados`, 'log-success')
 })
 
@@ -374,10 +554,17 @@ bridge.on('RUN_COMPLETE', (payload) => {
   if (!state.hasActivatedFirst || run.filesModified.length > 0) {
     showResultSpotlight(run)
   }
+
+  const entry = logPanes.get(run.agentId)
+  if (entry) {
+    entry.statusBadge.className = `log-status-badge log-status-badge--${run.status}`
+    entry.statusBadge.textContent = run.status === 'success' ? 'concluído' : 'erro'
+  }
 })
 
 bridge.on('INITIAL_STATE', (payload) => {
   const p = payload as { agents: unknown[]; hasAgents: boolean }
+  updateEmptyState(p.hasAgents)
   if (!p.hasAgents && !state.hasCompletedTutorial) {
     // Tutorial will be shown via TUTORIAL_STEP from the extension
   }
@@ -424,10 +611,16 @@ document.getElementById('btn-run-all')!.addEventListener('click', () => {
 })
 
 document.getElementById('btn-clear-log')!.addEventListener('click', () => {
-  logEl.innerHTML = ''
+  paneSystem.innerHTML = ''
 })
+
+// ── Zoom controls ─────────────────────────────────────────────────────────────
+
+document.getElementById('btn-zoom-in')!.addEventListener('click', () => renderer.zoomIn())
+document.getElementById('btn-zoom-out')!.addEventListener('click', () => renderer.zoomOut())
+document.getElementById('btn-zoom-fit')!.addEventListener('click', () => renderer.fitToScreen())
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 bridge.send('REQUEST_STATE')
-appendLog('AgentFlow pronto. Clique em "Varrer repositório" para começar.', 'log-info')
+appendLog('AgentFlow pronto. Clique em "Analisar projeto" para começar.', 'log-info')

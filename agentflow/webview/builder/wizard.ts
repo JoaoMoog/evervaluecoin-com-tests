@@ -1,17 +1,31 @@
 import { bridge } from '../bridge'
 
 const GOAL_OPTIONS = [
-  { value: 'test',     label: '🧪 Escrever testes',       detail: 'Gera testes unitários e de integração' },
-  { value: 'security', label: '🛡 Revisar segurança',     detail: 'Detecta vulnerabilidades e más práticas' },
-  { value: 'docs',     label: '📝 Documentar código',     detail: 'Gera JSDoc, README e documentação técnica' },
-  { value: 'review',   label: '🔍 Revisar qualidade',     detail: 'Analisa clean code, performance e boas práticas' },
-  { value: 'custom',   label: '✏️ Objetivo personalizado', detail: 'Descreva exatamente o que você quer' },
+  { value: 'test',     label: '🧪 Escrever testes',        detail: 'Gera testes unitários e de integração automaticamente',
+    example: "describe('checkout', () => {\n  it('should process payment', () => {\n    expect(result.status).toBe('success')\n  })\n})" },
+  { value: 'security', label: '🛡 Revisar segurança',      detail: 'Detecta senhas expostas, inputs sem validação e outros riscos',
+    example: '⚠ checkout.ts:45 — Senha exposta em variável\n⚠ api/users.ts:12 — Input não sanitizado antes de query' },
+  { value: 'docs',     label: '📝 Documentar código',      detail: 'Adiciona descrições claras às funções e arquivos do projeto',
+    example: "/** Processa o pagamento via Stripe.\n * @param amount Valor em centavos\n * @returns Status da transação\n */" },
+  { value: 'review',   label: '🔍 Revisar qualidade',      detail: 'Sugere melhorias de legibilidade, performance e organização',
+    example: '💡 processOrder() tem 120 linhas — considere dividir\n💡 3 loops aninhados em cart.ts — pode otimizar' },
+  { value: 'custom',   label: '✏️ Objetivo personalizado',  detail: 'Descreva exatamente o que você quer que o agente faça',
+    example: null },
 ]
 
 const TRIGGER_OPTIONS = [
-  { value: 'manual',     label: '🖱 Somente quando eu pedir', detail: 'Você decide quando ele executa' },
-  { value: 'file_save',  label: '💾 Ao salvar um arquivo',   detail: 'Executa automaticamente ao salvar' },
-  { value: 'on_startup', label: '🚀 Ao abrir o projeto',     detail: 'Executa toda vez que você abre o VS Code' },
+  { value: 'manual',
+    label: '🖱 Somente quando eu pedir',
+    detail: 'Você clica em ▷ quando quiser rodar o agente',
+    example: 'Ideal para tarefas pontuais, como revisar antes de um deploy' },
+  { value: 'file_save',
+    label: '💾 Ao salvar um arquivo',
+    detail: 'Executa automaticamente toda vez que você salvar',
+    example: 'Ex: sempre que salvar um .ts, gera os testes daquela função' },
+  { value: 'on_startup',
+    label: '🚀 Ao abrir o projeto',
+    detail: 'Roda uma vez quando você abre o VS Code',
+    example: 'Ex: mostra um resumo do que mudou desde ontem' },
 ]
 
 const ALL_SKILLS = [
@@ -186,7 +200,7 @@ export class BuilderWizard {
   // ── Step 1: Trigger ─────────────────────────────────────────────────────────
 
   private renderStep1(el: HTMLElement): void {
-    this.addStepHeading(el, 'Quando este agente vai executar?', 'Escolha o que dispara este agente automaticamente.')
+    this.addStepHeading(el, 'Quando este agente vai executar?', 'Escolha o que dispara este agente. Você pode mudar isso depois.')
 
     TRIGGER_OPTIONS.forEach(opt => {
       const card = this.makeOptionCard(
@@ -197,6 +211,11 @@ export class BuilderWizard {
           patternWrap.style.display = val === 'file_save' ? 'block' : 'none'
         }
       )
+      // Concrete example below the detail
+      const ex = document.createElement('div')
+      ex.className = 'builder-option-example'
+      ex.textContent = opt.example
+      card.appendChild(ex)
       el.appendChild(card)
     })
 
@@ -206,7 +225,7 @@ export class BuilderWizard {
 
     const patternLabel = document.createElement('label')
     patternLabel.className = 'builder-field-label'
-    patternLabel.textContent = 'Padrão de arquivo (glob)'
+    patternLabel.textContent = 'Quais arquivos monitorar?'
 
     const patternInput = document.createElement('input')
     patternInput.type = 'text'
@@ -217,7 +236,7 @@ export class BuilderWizard {
 
     const hint = document.createElement('div')
     hint.className = 'builder-hint'
-    hint.textContent = 'Exemplos: src/**/*.ts  ·  **/*.test.ts  ·  src/services/*'
+    hint.textContent = 'src/**/*.ts  →  todos os .ts em src/   ·   **/*.test.ts  →  arquivos de teste'
 
     patternWrap.appendChild(patternLabel)
     patternWrap.appendChild(patternInput)
@@ -285,6 +304,12 @@ export class BuilderWizard {
           this.state.skills = GOAL_DEFAULT_SKILLS[val] ?? ['read-file']
         }
       )
+      if (opt.example) {
+        const ex = document.createElement('div')
+        ex.className = 'builder-option-example'
+        ex.textContent = opt.example
+        card.appendChild(ex)
+      }
       el.appendChild(card)
     })
 
@@ -410,6 +435,61 @@ export class BuilderWizard {
       chips.appendChild(chip)
     })
     el.appendChild(chips)
+
+    // Summary card
+    const summary = document.createElement('div')
+    summary.className = 'builder-summary-card'
+
+    const summaryRows: Array<{ icon: string; label: string; value: string }> = [
+      {
+        icon: '⚡',
+        label: 'Disparo',
+        value: TRIGGER_OPTIONS.find(t => t.value === this.state.trigger)?.label ?? this.state.trigger,
+      },
+      {
+        icon: '🎯',
+        label: 'Objetivo',
+        value: GOAL_OPTIONS.find(g => g.value === this.state.goalType)?.label ?? this.state.goalType,
+      },
+      {
+        icon: '📦',
+        label: 'Contexto',
+        value: this.state.flowLabel
+          ? `Fluxo: ${this.state.flowLabel}`
+          : this.state.customContext || 'Todo o projeto',
+      },
+      {
+        icon: '🔧',
+        label: 'Ações',
+        value: this.state.skills.length
+          ? this.state.skills.map(s => ALL_SKILLS.find(a => a.id === s)?.label ?? s).join(' · ')
+          : 'Nenhuma ação selecionada',
+      },
+    ]
+
+    summaryRows.forEach(row => {
+      const rowEl = document.createElement('div')
+      rowEl.className = 'builder-summary-row'
+
+      const iconEl = document.createElement('span')
+      iconEl.className = 'builder-summary-icon'
+      iconEl.textContent = row.icon
+
+      const labelEl = document.createElement('span')
+      labelEl.className = 'builder-summary-label'
+      labelEl.textContent = row.label + ':'
+
+      const valueEl = document.createElement('span')
+      valueEl.className = 'builder-summary-value'
+      valueEl.textContent = row.value
+
+      rowEl.appendChild(iconEl)
+      rowEl.appendChild(labelEl)
+      rowEl.appendChild(valueEl)
+      summary.appendChild(rowEl)
+    })
+
+    el.appendChild(summary)
 
     // Prompt editor
     const promptLbl = document.createElement('div')

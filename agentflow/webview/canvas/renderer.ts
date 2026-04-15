@@ -34,6 +34,8 @@ export class CanvasRenderer {
   private edgesGroup: SVGGElement
   private nodes: Map<string, CanvasNodeView> = new Map()
   private onNodeClick: NodeClickHandler | null = null
+  private selectedNodeId: string | null = null
+  private tooltip!: HTMLElement
 
   // Pan / zoom state
   private isPanning = false
@@ -64,6 +66,10 @@ export class CanvasRenderer {
     container.appendChild(this.svg)
 
     this.setupPanning()
+
+    this.tooltip = document.createElement('div')
+    this.tooltip.id = 'node-tooltip'
+    document.body.appendChild(this.tooltip)
   }
 
   setNodes(nodeData: CanvasNodeData[], edgeData: CanvasEdgeData[]): void {
@@ -109,6 +115,20 @@ export class CanvasRenderer {
       dot.classList.toggle('status-dot--running', status === 'running')
     }
 
+    const statusTextEl = this.svg.querySelector(`[data-id="${node.id}"] [data-status-text]`) as SVGTextElement | null
+    if (statusTextEl) {
+      const STATUS_LABELS: Record<string, {text: string; color: string}> = {
+        idle:    { text: '● Pronto',       color: '#22c55e' },
+        running: { text: '⏳ Executando…', color: '#f59e0b' },
+        success: { text: '✓ Concluído',    color: '#22c55e' },
+        error:   { text: '✗ Erro',         color: '#ef4444' },
+        paused:  { text: '⏸ Pausado',      color: '#6b7280' },
+      }
+      const s = STATUS_LABELS[status] ?? STATUS_LABELS.idle
+      statusTextEl.textContent = s.text
+      statusTextEl.setAttribute('fill', s.color)
+    }
+
     if (status === 'success') {
       this.showCompletionMark(node.id)
     }
@@ -116,6 +136,45 @@ export class CanvasRenderer {
 
   setNodeClickHandler(fn: NodeClickHandler): void {
     this.onNodeClick = fn
+  }
+
+  zoomIn(): void {
+    this.scale = Math.min(2, this.scale + 0.15)
+    this.applyTransform()
+  }
+
+  zoomOut(): void {
+    this.scale = Math.max(0.3, this.scale - 0.15)
+    this.applyTransform()
+  }
+
+  fitToScreen(): void {
+    if (this.nodes.size === 0) return
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    this.nodes.forEach(n => {
+      minX = Math.min(minX, n.x)
+      minY = Math.min(minY, n.y)
+      maxX = Math.max(maxX, n.x + n.width)
+      maxY = Math.max(maxY, n.y + n.height)
+    })
+    const padding = 40
+    const svgW = this.svg.clientWidth  || 800
+    const svgH = this.svg.clientHeight || 600
+    const contentW = maxX - minX + padding * 2
+    const contentH = maxY - minY + padding * 2
+    this.scale = Math.min(1, Math.min(svgW / contentW, svgH / contentH))
+    this.viewOffset = {
+      x: (svgW - contentW * this.scale) / 2 - (minX - padding) * this.scale,
+      y: (svgH - contentH * this.scale) / 2 - (minY - padding) * this.scale,
+    }
+    this.applyTransform()
+  }
+
+  private applyTransform(): void {
+    this.mainGroup.setAttribute(
+      'transform',
+      `translate(${this.viewOffset.x}, ${this.viewOffset.y}) scale(${this.scale})`
+    )
   }
 
   // Spotlight: dim everything except nodes of the given type
@@ -198,11 +257,65 @@ export class CanvasRenderer {
       dot.setAttribute('r', '5')
       dot.setAttribute('fill', STATUS_COLORS.idle)
       g.appendChild(dot)
+
+      const statusText = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+      statusText.setAttribute('class', 'agent-status-text')
+      statusText.setAttribute('data-status-text', 'true')
+      statusText.setAttribute('x', String(node.width / 2))
+      statusText.setAttribute('y', String(node.height + 12))
+      statusText.setAttribute('text-anchor', 'middle')
+      statusText.setAttribute('fill', '#6b7280')
+      statusText.setAttribute('font-size', '9')
+      statusText.textContent = '● Pronto'
+      g.appendChild(statusText)
     }
 
-    g.addEventListener('click', () => this.onNodeClick?.(node))
+    g.addEventListener('click', () => {
+      this.selectNode(node.id)
+      this.onNodeClick?.(node)
+    })
+    g.addEventListener('mouseenter', (e: MouseEvent) => {
+      const tip = this.getTooltipText(node)
+      if (!tip) return
+      this.tooltip.textContent = tip
+      this.tooltip.classList.add('visible')
+      this.tooltip.style.left = `${e.clientX + 14}px`
+      this.tooltip.style.top  = `${e.clientY - 10}px`
+    })
+    g.addEventListener('mousemove', (e: MouseEvent) => {
+      this.tooltip.style.left = `${e.clientX + 14}px`
+      this.tooltip.style.top  = `${e.clientY - 10}px`
+    })
+    g.addEventListener('mouseleave', () => {
+      this.tooltip.classList.remove('visible')
+    })
     this.makeDraggable(g, node)
     this.nodesGroup.appendChild(g)
+  }
+
+  private selectNode(id: string): void {
+    // Remove old selection
+    if (this.selectedNodeId) {
+      const old = this.svg.querySelector(`[data-id="${this.selectedNodeId}"]`)
+      old?.classList.remove('node-selected')
+    }
+    this.selectedNodeId = id
+    const el = this.svg.querySelector(`[data-id="${id}"]`)
+    el?.classList.add('node-selected')
+  }
+
+  private getTooltipText(node: CanvasNodeView): string {
+    const TIPS: Record<string, string> = {
+      agent:    'Clique para configurar e ativar este agente',
+      function: node.data && (node.data as Record<string,unknown>).hasTests === false
+        ? 'Esta função não tem testes — clique para ver detalhes'
+        : 'Clique para ver os detalhes desta função',
+      trigger:  'Área do projeto detectada — clique para criar um agente especializado',
+      route:    'Rota da API — clique para ver detalhes',
+      model:    'Modelo de dados — clique para ver detalhes',
+      skill:    'Ferramenta disponível para agentes',
+    }
+    return TIPS[node.type] ?? ''
   }
 
   private drawEdge(edge: CanvasEdgeData): void {
@@ -300,10 +413,7 @@ export class CanvasRenderer {
       if (!this.isPanning) return
       this.viewOffset.x = e.clientX - this.panStart.x
       this.viewOffset.y = e.clientY - this.panStart.y
-      this.mainGroup.setAttribute(
-        'transform',
-        `translate(${this.viewOffset.x}, ${this.viewOffset.y}) scale(${this.scale})`
-      )
+      this.applyTransform()
     })
 
     window.addEventListener('mouseup', () => {
@@ -314,10 +424,7 @@ export class CanvasRenderer {
     this.svg.addEventListener('wheel', (e: WheelEvent) => {
       e.preventDefault()
       this.scale = Math.max(0.3, Math.min(2, this.scale - e.deltaY * 0.001))
-      this.mainGroup.setAttribute(
-        'transform',
-        `translate(${this.viewOffset.x}, ${this.viewOffset.y}) scale(${this.scale})`
-      )
+      this.applyTransform()
     }, { passive: false })
   }
 

@@ -189,7 +189,7 @@ export class InspectorPanel {
 
     const lbl = document.createElement('div')
     lbl.className = 'inspector-label'
-    lbl.textContent = 'Instruções para o agente'
+    lbl.textContent = 'Instruções do agente'
 
     const suggestBtn = document.createElement('button')
     suggestBtn.className = 'btn-link-small'
@@ -277,7 +277,7 @@ export class InspectorPanel {
 
     const lbl = document.createElement('div')
     lbl.className = 'inspector-label'
-    lbl.textContent = 'Quando executar?'
+    lbl.textContent = 'Quando este agente vai rodar?'
 
     const select = document.createElement('select')
     select.className = 'inspector-select'
@@ -339,9 +339,15 @@ export class InspectorPanel {
       const agentDef = this.buildAgentDefinition(agentId, data, node)
       agentDef.active = true
       bridge.send('ACTIVATE_AGENT', agentDef)
-      activateBtn.textContent = '✓ Ativado!'
+      activateBtn.textContent = '⏳ Ativando...'
       activateBtn.disabled = true
-      activateBtn.style.background = '#22c55e'
+      // Success state after short delay (bridge will send AGENT_STATUS)
+      setTimeout(() => {
+        if (activateBtn.disabled) {
+          activateBtn.textContent = '✓ Agente ativado!'
+          activateBtn.style.background = '#22c55e'
+        }
+      }, 1500)
     })
 
     const runBtn = document.createElement('button')
@@ -355,16 +361,23 @@ export class InspectorPanel {
       setTimeout(() => {
         runBtn.textContent = '▷ Testar agora'
         runBtn.disabled = false
-      }, 15000)
+      }, 20000)
     })
 
     const deleteBtn = document.createElement('button')
     deleteBtn.className = 'btn btn-danger'
     deleteBtn.textContent = 'Remover agente'
-    deleteBtn.addEventListener('click', () => {
-      if (confirm(`Remover o agente "${String(data.name ?? agentId)}"?`)) {
-        bridge.send('DELETE_AGENT', { id: agentId })
-        this.hide()
+    deleteBtn.addEventListener('click', async () => {
+      const modal = (window as Window & { showDeleteModal?: (id: string, name: string) => Promise<boolean> }).showDeleteModal
+      if (modal) {
+        const confirmed = await modal(agentId, String(data.name ?? agentId))
+        if (confirmed) this.hide()
+      } else {
+        // Fallback
+        if (confirm(`Remover o agente "${String(data.name ?? agentId)}"?`)) {
+          bridge.send('DELETE_AGENT', { id: agentId })
+          this.hide()
+        }
       }
     })
 
