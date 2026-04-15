@@ -1,4 +1,3 @@
-import * as path from 'path'
 import { FunctionInfo, RouteInfo, ModelInfo } from './types'
 
 export interface FlowInfo {
